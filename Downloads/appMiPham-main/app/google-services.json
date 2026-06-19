@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "419767223173",
+    "project_id": "appbanmyphamdoan",
+    "storage_bucket": "appbanmyphamdoan.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:419767223173:android:2b9c68e1cc883b7d49faec",
+        "android_client_info": {
+          "package_name": "com.example.appbanmypham"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB0gxl7m6OHSWWzYVPUeOW_DEl6gKGJL0k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
