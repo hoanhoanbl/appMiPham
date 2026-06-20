@@ -39,6 +39,7 @@ data class TreatmentSession(
 )
 
 object TreatmentSessionStatus {
+    const val UNSCHEDULED = "unscheduled"
     const val SCHEDULED = "scheduled"
     const val COMPLETED = "completed"
     const val CANCELLED = "cancelled"
@@ -53,6 +54,7 @@ data class TreatmentSessionStatusMeta(
 )
 
 val TREATMENT_SESSION_STATUSES = listOf(
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.UNSCHEDULED, "Cho dat lich", "Buoi dieu tri da co trong goi nhung chua chon ngay gio"),
     TreatmentSessionStatusMeta(TreatmentSessionStatus.SCHEDULED, "Da len lich", "Buoi dieu tri dang cho thuc hien"),
     TreatmentSessionStatusMeta(TreatmentSessionStatus.COMPLETED, "Hoan thanh", "Buoi dieu tri da hoan thanh"),
     TreatmentSessionStatusMeta(TreatmentSessionStatus.CANCELLED, "Da huy", "Buoi dieu tri da huy"),
@@ -66,6 +68,19 @@ fun treatmentSessionStatusMeta(status: String): TreatmentSessionStatusMeta =
 
 fun firestoreDocToTreatmentSession(doc: DocumentSnapshot): TreatmentSession {
     val now = System.currentTimeMillis()
+    val scheduledStartAt = doc.getLong("scheduledStartAt") ?: 0L
+    val scheduledEndAt = doc.getLong("scheduledEndAt") ?: 0L
+    val timeSlotLabel = doc.getString("timeSlotLabel") ?: ""
+    val rawStatus = doc.getString("status") ?: TreatmentSessionStatus.SCHEDULED
+    val normalizedStatus =
+        if (rawStatus in setOf(TreatmentSessionStatus.SCHEDULED, TreatmentSessionStatus.RESCHEDULED) &&
+            scheduledStartAt == 0L &&
+            timeSlotLabel.isBlank()
+        ) {
+            TreatmentSessionStatus.UNSCHEDULED
+        } else {
+            rawStatus
+        }
     return TreatmentSession(
         id = doc.id,
         treatmentPlanId = doc.getString("treatmentPlanId") ?: "",
@@ -76,11 +91,11 @@ fun firestoreDocToTreatmentSession(doc: DocumentSnapshot): TreatmentSession {
         packageName = doc.getString("packageName") ?: "",
         sessionNumber = (doc.getLong("sessionNumber") ?: 1L).toInt().coerceAtLeast(1),
         totalSessions = (doc.getLong("totalSessions") ?: 1L).toInt().coerceAtLeast(1),
-        scheduledStartAt = doc.getLong("scheduledStartAt") ?: 0L,
-        scheduledEndAt = doc.getLong("scheduledEndAt") ?: 0L,
+        scheduledStartAt = scheduledStartAt,
+        scheduledEndAt = scheduledEndAt,
         dateLabel = doc.getString("dateLabel") ?: "",
-        timeSlotLabel = doc.getString("timeSlotLabel") ?: "",
-        status = doc.getString("status") ?: TreatmentSessionStatus.SCHEDULED,
+        timeSlotLabel = timeSlotLabel,
+        status = normalizedStatus,
         requiresProgressPhotos = doc.getBoolean("requiresProgressPhotos") == true,
         photoPolicy = doc.getString("photoPolicy") ?: ProgressPhotoPolicy.NONE,
         photoSkipReason = doc.getString("photoSkipReason") ?: "",

@@ -42,6 +42,8 @@
         <activity android:name=".ui.admin.ManageTreatmentActivity" />
         <activity android:name=".ui.consultant.ConsultantDashboardActivity" />
         <activity android:name=".ui.consultant.ConsultantAppointmentDetailActivity" />
+        <activity android:name=".ui.consultant.ConsultantChatActivity" />
+        <activity android:name=".ui.consultant.ConsultantCustomerProfileActivity" />
         <activity android:name=".ui.cart.CartActivity"/>
         <activity
             android:name=".ui.product.ProductDetailsActivity"

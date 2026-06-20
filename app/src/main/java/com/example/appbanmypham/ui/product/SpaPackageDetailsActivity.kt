@@ -219,14 +219,14 @@ private fun TreatmentDisclosureSection(spa: SpaPackage) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp).background(Color.White).padding(20.dp)) {
         SectionTitle("Thong tin lieu trinh")
         Spacer(Modifier.height(10.dp))
-        TreatmentInfoRow(Icons.Default.EventAvailable, "${spa.sessionCount} buoi dieu tri", "Tao lieu trinh rieng sau lich hen dau tien")
+        TreatmentInfoRow(Icons.Default.EventAvailable, "${spa.sessionCount} buoi dieu tri", "So buoi co dinh theo goi spa admin da thiet lap")
         TreatmentInfoRow(Icons.Default.Schedule, "${spa.durationPerSessionMinutes.takeIf { it > 0 } ?: spa.durationMinutes} phut / buoi", "Cach nhau khoang ${spa.suggestedIntervalDays} ngay theo goi y")
         if (spa.requiresProgressPhotos && spa.photoPolicy != ProgressPhotoPolicy.NONE) {
             TreatmentInfoRow(Icons.Default.PhotoCamera, progressPhotoPolicyMeta(spa.photoPolicy).label, spa.photoGuide.ifBlank { "Tu van vien se cap nhat anh tien trinh cho khach xem." })
         }
         Spacer(Modifier.height(8.dp))
         Text(
-            "Khi dat goi nay, he thong chi tao lich tu van/dieu tri dau tien. Cac buoi tiep theo se duoc tu van vien len ke hoach sau khi trao doi voi ban.",
+            "Khi dat goi nay, he thong tao san lieu trinh ${spa.sessionCount} buoi. Ban dat truoc buoi dau tien, cac buoi tiep theo se hien trong Lieu trinh cua toi de ban chon lich phu hop.",
             color = Color(0xFF5A8A80),
             fontSize = 13.sp,
             lineHeight = 20.sp

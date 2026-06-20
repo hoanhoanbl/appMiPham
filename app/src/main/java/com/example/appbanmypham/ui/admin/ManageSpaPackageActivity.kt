@@ -555,7 +555,7 @@ private fun SpaPackageDialog(
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Column(Modifier.weight(1f)) {
-                        SpaDialogLabel(if (isTreatmentTemplate) "Tong gia lieu trinh *" else "Gia *")
+                        SpaDialogLabel(if (isTreatmentTemplate) "Tong gia goi *" else "Gia *")
                         SpaDialogTextField(price, { price = it }, "0", KeyboardType.Number)
                     }
                     Column(Modifier.weight(1f)) {
@@ -566,7 +566,7 @@ private fun SpaPackageDialog(
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Column(Modifier.weight(1f)) {
-                        SpaDialogLabel(if (isTreatmentTemplate) "Thoi luong lich dau *" else "Thoi luong *")
+                        SpaDialogLabel(if (isTreatmentTemplate) "Thoi luong moi buoi *" else "Thoi luong *")
                         SpaDialogTextField(duration, { duration = it }, "60", KeyboardType.Number)
                     }
                     Column(Modifier.weight(1f)) {
@@ -578,7 +578,7 @@ private fun SpaPackageDialog(
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Column(Modifier.weight(1f)) {
-                            SpaDialogLabel("So buoi *")
+                            SpaDialogLabel("So buoi co dinh *")
                             SpaDialogTextField(sessionCount, { sessionCount = it }, "3", KeyboardType.Number)
                         }
                         Column(Modifier.weight(1f)) {

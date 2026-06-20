@@ -14,6 +14,7 @@ data class TreatmentPlan(
     val consultantName: String = "",
     val spaPackageId: String = "",
     val packageName: String = "",
+    val packageImageUrl: String = "",
     val packageType: String = SpaPackageType.TREATMENT_TEMPLATE,
     val category: String = "",
     val totalPrice: Double = 0.0,
@@ -38,6 +39,7 @@ data class TreatmentPlan(
 
 object TreatmentPlanStatus {
     const val DRAFT = "draft"
+    const val WAITING_CONSULTANT = "waiting_consultant"
     const val ACTIVE = "active"
     const val COMPLETED = "completed"
     const val CANCELLED = "cancelled"
@@ -51,6 +53,7 @@ data class TreatmentPlanStatusMeta(
 
 val TREATMENT_PLAN_STATUSES = listOf(
     TreatmentPlanStatusMeta(TreatmentPlanStatus.DRAFT, "Ban nhap", "Ke hoach dang duoc tu van vien chuan bi"),
+    TreatmentPlanStatusMeta(TreatmentPlanStatus.WAITING_CONSULTANT, "Cho tu van vien", "Lieu trinh da tao tu goi spa va dang cho tu van vien nhan lich"),
     TreatmentPlanStatusMeta(TreatmentPlanStatus.ACTIVE, "Dang dieu tri", "Lieu trinh dang dien ra"),
     TreatmentPlanStatusMeta(TreatmentPlanStatus.COMPLETED, "Da hoan thanh", "Tat ca buoi can thiet da hoan thanh"),
     TreatmentPlanStatusMeta(TreatmentPlanStatus.CANCELLED, "Da huy", "Lieu trinh da dung hoac huy")
@@ -74,6 +77,7 @@ fun firestoreDocToTreatmentPlan(doc: DocumentSnapshot): TreatmentPlan {
         consultantName = doc.getString("consultantName") ?: "",
         spaPackageId = doc.getString("spaPackageId") ?: "",
         packageName = doc.getString("packageName") ?: "",
+        packageImageUrl = doc.getString("packageImageUrl") ?: "",
         packageType = doc.getString("packageType") ?: SpaPackageType.TREATMENT_TEMPLATE,
         category = doc.getString("category") ?: "",
         totalPrice = doc.getDouble("totalPrice") ?: 0.0,
@@ -110,6 +114,7 @@ fun TreatmentPlan.toFirestoreMap(includeCreatedAt: Boolean = false): HashMap<Str
         "consultantName" to consultantName,
         "spaPackageId" to spaPackageId,
         "packageName" to packageName,
+        "packageImageUrl" to packageImageUrl,
         "packageType" to packageType,
         "category" to category,
         "totalPrice" to totalPrice,

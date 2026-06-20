@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Logout
@@ -35,7 +36,9 @@ import com.example.appbanmypham.model.AppointmentStatus
 import com.example.appbanmypham.model.ChatThreadStatus
 import com.example.appbanmypham.model.ConsultationChatThread
 import com.example.appbanmypham.model.SpaAppointment
+import com.example.appbanmypham.model.TreatmentPlanStatus
 import com.example.appbanmypham.model.appointmentStatusMeta
+import com.example.appbanmypham.model.firestoreDocToConsultationChatThread
 import com.example.appbanmypham.model.firestoreDocToSpaAppointment
 import com.example.appbanmypham.model.toFirestoreMap
 import com.example.appbanmypham.ui.auth.LoginActivity
@@ -44,8 +47,10 @@ import com.example.appbanmypham.ui.theme.AppGradients
 import com.example.appbanmypham.ui.theme.BackgroundPrimary
 import com.example.appbanmypham.ui.theme.MintGreen
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -75,6 +80,8 @@ class ConsultantDashboardActivity : ComponentActivity() {
     }
 }
 
+private enum class ConsultantHomeTab { SCHEDULES, CHAT }
+
 @Composable
 fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
     val auth = remember { FirebaseAuth.getInstance() }
@@ -88,6 +95,8 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
     var isConsultant by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf(listOf<SpaAppointment>()) }
     var assigned by remember { mutableStateOf(listOf<SpaAppointment>()) }
+    var chatThreads by remember { mutableStateOf(listOf<ConsultationChatThread>()) }
+    var mainTab by remember { mutableStateOf(ConsultantHomeTab.SCHEDULES) }
     var selectedTab by remember { mutableStateOf(0) }
 
     LaunchedEffect(user?.uid) {
@@ -125,12 +134,40 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                     ?.sortedWith(compareBy<SpaAppointment> { it.startAt }.thenBy { it.createdAt })
                     ?: emptyList()
             }
+        regs += db.collection("consultation_chat_threads")
+            .whereEqualTo("consultantId", user.uid)
+            .addSnapshotListener { snap, _ ->
+                chatThreads = snap?.documents
+                    ?.mapNotNull { runCatching { firestoreDocToConsultationChatThread(it) }.getOrNull() }
+                    ?.sortedByDescending { it.lastMessageAt.takeIf { time -> time > 0L } ?: it.updatedAt }
+                    ?: emptyList()
+            }
         onDispose { regs.forEach { it.remove() } }
     }
 
     Scaffold(
         containerColor = BackgroundPrimary,
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            if (isConsultant) {
+                NavigationBar(containerColor = Color.White, tonalElevation = 8.dp) {
+                    NavigationBarItem(
+                        selected = mainTab == ConsultantHomeTab.SCHEDULES,
+                        onClick = { mainTab = ConsultantHomeTab.SCHEDULES },
+                        icon = { Icon(Icons.Default.EventAvailable, contentDescription = null) },
+                        label = { Text("Lich") },
+                        colors = NavigationBarItemDefaults.colors(selectedIconColor = MintGreen, selectedTextColor = MintGreen)
+                    )
+                    NavigationBarItem(
+                        selected = mainTab == ConsultantHomeTab.CHAT,
+                        onClick = { mainTab = ConsultantHomeTab.CHAT },
+                        icon = { Icon(Icons.Default.Chat, contentDescription = null) },
+                        label = { Text("Chat") },
+                        colors = NavigationBarItemDefaults.colors(selectedIconColor = MintGreen, selectedTextColor = MintGreen)
+                    )
+                }
+            }
+        }
     ) { padding ->
         when {
             isRoleLoading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -142,63 +179,123 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
             else -> Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 ConsultantHeader(userName = user?.displayName ?: user?.email?.substringBefore("@") ?: "Consultant", onLogout = onLogout)
 
-                TabRow(selectedTabIndex = selectedTab, containerColor = Color.White, contentColor = MintGreen) {
-                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Cho xac nhan (${pending.size})") })
-                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Lich cua toi (${assigned.size})") })
-                }
+                if (mainTab == ConsultantHomeTab.SCHEDULES) {
+                    TabRow(selectedTabIndex = selectedTab, containerColor = Color.White, contentColor = MintGreen) {
+                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Cho xac nhan (${pending.size})") })
+                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Lich cua toi (${assigned.size})") })
+                    }
 
-                val list = if (selectedTab == 0) pending else assigned
-                if (list.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.EventAvailable, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
-                            Spacer(Modifier.height(8.dp))
-                            Text(if (selectedTab == 0) "Khong co lich pending" else "Chua co lich duoc giao", color = Color(0xFF8ACABA), fontSize = 15.sp)
+                    val list = if (selectedTab == 0) pending else assigned
+                    if (list.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.EventAvailable, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text(if (selectedTab == 0) "Khong co lich pending" else "Chua co lich duoc giao", color = Color(0xFF8ACABA), fontSize = 15.sp)
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(list, key = { it.id }) { appointment ->
+                                ConsultantAppointmentCard(
+                                    appointment = appointment,
+                                    showConfirm = selectedTab == 0,
+                                    onOpenDetail = {
+                                        context.startActivity(
+                                            Intent(context, ConsultantAppointmentDetailActivity::class.java)
+                                                .putExtra("appointment_id", appointment.id)
+                                        )
+                                    },
+                                    onConfirm = {
+                                        scope.launch {
+                                            val result = runCatching { confirmAppointment(db, appointment.id, user!!) }
+                                            snackbarHostState.showSnackbar(
+                                                if (result.isSuccess) "Da nhan lich va mo chat" else result.exceptionOrNull()?.message ?: "Nhan lich that bai"
+                                            )
+                                        }
+                                    },
+                                    onComplete = {
+                                        scope.launch {
+                                            val result = runCatching { completeAppointment(db, appointment.id, user!!) }
+                                            snackbarHostState.showSnackbar(
+                                                if (result.isSuccess) "Da cap nhat lich" else result.exceptionOrNull()?.message ?: "Cap nhat that bai"
+                                            )
+                                        }
+                                    },
+                                    onNoShow = {
+                                        scope.launch {
+                                            val result = runCatching { markAppointmentNoShow(db, appointment.id, user!!) }
+                                            snackbarHostState.showSnackbar(
+                                                if (result.isSuccess) "Da danh dau khach khong den" else result.exceptionOrNull()?.message ?: "Cap nhat that bai"
+                                            )
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(list, key = { it.id }) { appointment ->
-                            ConsultantAppointmentCard(
-                                appointment = appointment,
-                                showConfirm = selectedTab == 0,
-                                onOpenDetail = {
-                                    context.startActivity(
-                                        Intent(context, ConsultantAppointmentDetailActivity::class.java)
-                                            .putExtra("appointment_id", appointment.id)
-                                    )
-                                },
-                                onConfirm = {
-                                    scope.launch {
-                                        val result = runCatching { confirmAppointment(db, appointment.id, user!!) }
-                                        snackbarHostState.showSnackbar(
-                                            if (result.isSuccess) "Da nhan lich va mo chat" else result.exceptionOrNull()?.message ?: "Nhan lich that bai"
-                                        )
-                                    }
-                                },
-                                onComplete = {
-                                    scope.launch {
-                                        val result = runCatching { completeAppointment(db, appointment.id, user!!) }
-                                        snackbarHostState.showSnackbar(
-                                            if (result.isSuccess) "Da cap nhat lich" else result.exceptionOrNull()?.message ?: "Cap nhat that bai"
-                                        )
-                                    }
-                                },
-                                onNoShow = {
-                                    scope.launch {
-                                        val result = runCatching { markAppointmentNoShow(db, appointment.id, user!!) }
-                                        snackbarHostState.showSnackbar(
-                                            if (result.isSuccess) "Da danh dau khach khong den" else result.exceptionOrNull()?.message ?: "Cap nhat that bai"
-                                        )
-                                    }
-                                }
+                    ConsultantChatTab(
+                        threads = chatThreads,
+                        onOpenThread = { thread ->
+                            context.startActivity(
+                                Intent(context, ConsultantChatActivity::class.java)
+                                    .putExtra("thread_id", thread.id)
                             )
                         }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConsultantChatTab(
+    threads: List<ConsultationChatThread>,
+    onOpenThread: (ConsultationChatThread) -> Unit
+) {
+    if (threads.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
+                Spacer(Modifier.height(8.dp))
+                Text("Chua co cuoc chat nao", color = Color(0xFF8ACABA), fontSize = 15.sp)
+            }
+        }
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Hop thoai khach hang", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(Modifier.height(4.dp))
+            Text("Cham vao khach de mo khung chat rieng. Ho so khach nam trong header chat.", color = Color(0xFF6C8F87), fontSize = 12.sp)
+        }
+        items(threads, key = { it.id }) { thread ->
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { onOpenThread(thread) },
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(2.dp)
+            ) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFEAF9F5)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen)
                     }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(thread.userName.ifBlank { thread.userEmail.ifBlank { "Khach hang" } }, color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(thread.lastMessage.ifBlank { "Mo chat de trao doi voi khach" }, color = Color(0xFF6C8F87), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(18.dp))
                 }
             }
         }
@@ -208,6 +305,19 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
 private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: String, user: com.google.firebase.auth.FirebaseUser) {
     withContext(Dispatchers.IO) {
         val ref = db.collection("appointments").document(appointmentId)
+        val planDoc = db.collection("treatment_plans")
+            .whereEqualTo("appointmentId", appointmentId)
+            .get()
+            .await()
+            .documents
+            .firstOrNull()
+        val sessionDocs = planDoc?.let { plan ->
+            db.collection("treatment_sessions")
+                .whereEqualTo("treatmentPlanId", plan.id)
+                .get()
+                .await()
+                .documents
+        }.orEmpty()
         db.runTransaction { transaction ->
             val snap = transaction.get(ref)
             val status = snap.getString("status") ?: AppointmentStatus.PENDING
@@ -228,23 +338,50 @@ private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: Str
                     "updatedAt" to now
                 )
             )
-            val threadRef = db.collection("consultation_chat_threads").document(appointmentId)
-            val thread = ConsultationChatThread(
-                id = appointmentId,
-                appointmentId = appointmentId,
-                userId = snap.getString("userId") ?: "",
-                userEmail = snap.getString("userEmail") ?: "",
-                userName = snap.getString("userName") ?: "",
-                consultantId = user.uid,
-                consultantEmail = user.email.orEmpty(),
-                consultantName = consultantName,
-                status = ChatThreadStatus.ACTIVE,
-                createdAt = now,
-                updatedAt = now
+            val planId = planDoc?.id.orEmpty()
+            val threadId = planDoc?.getString("chatThreadId")?.takeIf { it.isNotBlank() } ?: appointmentId
+            planDoc?.let { plan ->
+                transaction.update(
+                    plan.reference,
+                    mapOf(
+                        "consultantId" to user.uid,
+                        "consultantEmail" to user.email.orEmpty(),
+                        "consultantName" to consultantName,
+                        "status" to TreatmentPlanStatus.ACTIVE,
+                        "chatThreadId" to threadId,
+                        "updatedAt" to now
+                    )
+                )
+                sessionDocs.forEach { session ->
+                    transaction.update(
+                        session.reference,
+                        mapOf(
+                            "consultantId" to user.uid,
+                            "updatedAt" to now
+                        )
+                    )
+                }
+            }
+            transaction.set(
+                db.collection("consultation_chat_threads").document(threadId),
+                mapOf(
+                    "appointmentId" to appointmentId,
+                    "treatmentPlanId" to planId,
+                    "userId" to (snap.getString("userId") ?: ""),
+                    "userEmail" to (snap.getString("userEmail") ?: ""),
+                    "userName" to (snap.getString("userName") ?: ""),
+                    "consultantId" to user.uid,
+                    "consultantEmail" to user.email.orEmpty(),
+                    "consultantName" to consultantName,
+                    "status" to ChatThreadStatus.ACTIVE,
+                    "updatedAt" to now,
+                    "createdAt" to now
+                ),
+                SetOptions.merge()
             )
-            transaction.set(threadRef, thread.toFirestoreMap(includeCreatedAt = true))
             null
-        }.await()
+        }
+            .await()
     }
 }
 
@@ -269,7 +406,56 @@ private suspend fun completeAppointment(db: FirebaseFirestore, appointmentId: St
             )
             null
         }.await()
+        syncTreatmentSessionFromAppointment(
+            db = db,
+            appointmentId = appointmentId,
+            status = "completed",
+            actorId = user.uid
+        )
     }
+}
+
+private suspend fun syncTreatmentSessionFromAppointment(
+    db: FirebaseFirestore,
+    appointmentId: String,
+    status: String,
+    actorId: String
+) {
+    val now = System.currentTimeMillis()
+    val sessions = db.collection("treatment_sessions")
+        .whereEqualTo("appointmentId", appointmentId)
+        .get()
+        .await()
+        .documents
+    if (sessions.isEmpty()) return
+    val batch = db.batch()
+    sessions.forEach { doc ->
+        val previousStatus = doc.getString("status") ?: ""
+        val planId = doc.getString("treatmentPlanId").orEmpty()
+        val updates = when (status) {
+            "completed" -> mutableMapOf<String, Any>(
+                "status" to "completed",
+                "completedAt" to now,
+                "completedBy" to actorId,
+                "updatedAt" to now
+            )
+            "no_show" -> mutableMapOf<String, Any>(
+                "status" to "no_show",
+                "noShowAt" to now,
+                "noShowBy" to actorId,
+                "updatedAt" to now
+            )
+            else -> mutableMapOf("status" to status, "updatedAt" to now)
+        }
+        batch.update(doc.reference, updates)
+        if (status == "completed" && previousStatus != "completed" && planId.isNotBlank()) {
+            batch.update(
+                db.collection("treatment_plans").document(planId),
+                mapOf("completedSessionCount" to FieldValue.increment(1), "updatedAt" to now)
+            )
+        }
+    }
+    batch.commit().await()
 }
 
 private suspend fun markAppointmentNoShow(db: FirebaseFirestore, appointmentId: String, user: com.google.firebase.auth.FirebaseUser) {
@@ -292,6 +478,12 @@ private suspend fun markAppointmentNoShow(db: FirebaseFirestore, appointmentId: 
             )
             null
         }.await()
+        syncTreatmentSessionFromAppointment(
+            db = db,
+            appointmentId = appointmentId,
+            status = "no_show",
+            actorId = user.uid
+        )
     }
 }
 

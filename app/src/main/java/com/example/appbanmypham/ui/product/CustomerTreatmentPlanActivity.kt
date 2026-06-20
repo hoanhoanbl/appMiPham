@@ -9,6 +9,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,15 +36,21 @@ import coil.compose.AsyncImage
 import com.example.appbanmypham.model.ChatSenderRole
 import com.example.appbanmypham.model.ConsultationChatMessage
 import com.example.appbanmypham.model.ConsultationChatThread
+import com.example.appbanmypham.model.AppointmentStatus
+import com.example.appbanmypham.model.BookingDateOption
+import com.example.appbanmypham.model.SPA_BOOKING_SLOTS
+import com.example.appbanmypham.model.SpaAppointment
 import com.example.appbanmypham.model.TreatmentPlan
 import com.example.appbanmypham.model.TreatmentProgressPhoto
 import com.example.appbanmypham.model.TreatmentSession
 import com.example.appbanmypham.model.TreatmentSessionStatus
+import com.example.appbanmypham.model.appointmentTimeRange
 import com.example.appbanmypham.model.firestoreDocToConsultationChatMessage
 import com.example.appbanmypham.model.firestoreDocToConsultationChatThread
 import com.example.appbanmypham.model.firestoreDocToTreatmentPlan
 import com.example.appbanmypham.model.firestoreDocToTreatmentProgressPhoto
 import com.example.appbanmypham.model.firestoreDocToTreatmentSession
+import com.example.appbanmypham.model.nextBookingDateOptions
 import com.example.appbanmypham.model.progressPhotoPolicyMeta
 import com.example.appbanmypham.model.progressPhotoTypeMeta
 import com.example.appbanmypham.model.toFirestoreMap
@@ -58,6 +67,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 class CustomerTreatmentPlanActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,6 +99,9 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
     var messageText by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(user != null) }
     var isSending by remember { mutableStateOf(false) }
+    var bookedSlotsByDate by remember { mutableStateOf<Map<Long, Set<String>>>(emptyMap()) }
+    var scheduleTarget by remember { mutableStateOf<TreatmentSession?>(null) }
+    val dateOptions = remember { nextBookingDateOptions(31) }
 
     val selectedPlan = plans.firstOrNull { it.id == selectedPlanId } ?: plans.firstOrNull()
     val canAccess = user != null && selectedPlan?.userId == user.uid
@@ -110,6 +123,30 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
                 isLoading = false
             }
         onDispose { reg.remove() }
+    }
+
+    LaunchedEffect(Unit) {
+        val start = dateOptions.firstOrNull()?.startOfDayMillis ?: return@LaunchedEffect
+        val end = (dateOptions.lastOrNull()?.startOfDayMillis ?: start) + DAY_MILLIS
+        bookedSlotsByDate = withContext(Dispatchers.IO) {
+            db.collection("appointments")
+                .whereGreaterThanOrEqualTo("startAt", start)
+                .whereLessThan("startAt", end)
+                .get()
+                .await()
+                .documents
+                .mapNotNull { doc ->
+                    val status = doc.getString("status") ?: return@mapNotNull null
+                    if (!AppointmentStatus.activeStatuses.contains(status)) return@mapNotNull null
+                    val startAt = doc.getLong("startAt") ?: return@mapNotNull null
+                    val slot = doc.getString("timeSlotLabel") ?: return@mapNotNull null
+                    val date = dateOptions.firstOrNull { startAt >= it.startOfDayMillis && startAt < it.startOfDayMillis + DAY_MILLIS }
+                        ?: return@mapNotNull null
+                    date.startOfDayMillis to slot
+                }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { it.value.toSet() }
+        }
     }
 
     DisposableEffect(selectedPlan?.id) {
@@ -196,13 +233,15 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
                             SectionCard {
                                 SectionTitle(Icons.Default.EventAvailable, "Timeline buoi dieu tri")
                                 if (sessions.isEmpty()) {
-                                    Text("Tu van vien chua tao buoi dieu tri.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                                    Text("Lieu trinh dang duoc khoi tao tu goi spa.", color = Color(0xFF8ACABA), fontSize = 13.sp)
                                 } else {
                                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         sessions.forEach { session ->
                                             CustomerSessionCard(
+                                                plan = plan,
                                                 session = session,
-                                                photos = photos.filter { it.treatmentSessionId == session.id }
+                                                photos = photos.filter { it.treatmentSessionId == session.id },
+                                                onSchedule = { scheduleTarget = session }
                                             )
                                         }
                                     }
@@ -261,6 +300,33 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
             }
         }
     }
+
+    scheduleTarget?.let { session ->
+        val plan = selectedPlan
+        if (plan != null && user != null) {
+            ScheduleSessionDialog(
+                session = session,
+                dateOptions = dateOptions,
+                bookedSlotsByDate = bookedSlotsByDate,
+                onDismiss = { scheduleTarget = null },
+                onConfirm = { date, slot ->
+                    scope.launch {
+                        val result = runCatching {
+                            scheduleTreatmentSession(
+                                db = db,
+                                plan = plan,
+                                session = session,
+                                date = date,
+                                slot = slot
+                            )
+                        }
+                        snackbarHostState.showSnackbar(if (result.isSuccess) "Da gui lich buoi dieu tri" else result.exceptionOrNull()?.message ?: "Dat lich that bai")
+                        scheduleTarget = null
+                    }
+                }
+            )
+        }
+    }
 }
 
 @Composable
@@ -286,7 +352,16 @@ private fun PlanListItem(plan: TreatmentPlan, selected: Boolean, onClick: () -> 
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(MintGreen.copy(0.14f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Spa, contentDescription = null, tint = MintGreen)
+            if (plan.packageImageUrl.isNotBlank()) {
+                AsyncImage(
+                    model = plan.packageImageUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Icon(Icons.Default.Spa, contentDescription = null, tint = MintGreen)
+            }
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -325,12 +400,21 @@ private fun InfoText(label: String, value: String) {
 }
 
 @Composable
-private fun CustomerSessionCard(session: TreatmentSession, photos: List<TreatmentProgressPhoto>) {
+private fun CustomerSessionCard(
+    plan: TreatmentPlan,
+    session: TreatmentSession,
+    photos: List<TreatmentProgressPhoto>,
+    onSchedule: () -> Unit
+) {
+    val needsSchedule = session.status == TreatmentSessionStatus.UNSCHEDULED ||
+        session.status == TreatmentSessionStatus.NO_SHOW ||
+        (session.scheduledStartAt == 0L && session.status in setOf(TreatmentSessionStatus.SCHEDULED, TreatmentSessionStatus.RESCHEDULED))
+    val canSchedule = plan.consultantId.isNotBlank() && needsSchedule
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFFF8FFFE)).padding(12.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
                 Text("Buoi ${session.sessionNumber}/${session.totalSessions}", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text(session.dateLabel.ifBlank { "Dang cho sap lich" } + session.timeSlotLabel.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty(), color = Color(0xFF5A8A80), fontSize = 12.sp)
+                Text(session.dateLabel.ifBlank { "Dang cho ban chon lich" } + session.timeSlotLabel.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty(), color = Color(0xFF5A8A80), fontSize = 12.sp)
             }
             Box(Modifier.clip(RoundedCornerShape(20.dp)).background(sessionBg(session.status)).padding(horizontal = 8.dp, vertical = 4.dp)) {
                 Text(treatmentSessionStatusMeta(session.status).label, color = sessionColor(session.status), fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -338,7 +422,23 @@ private fun CustomerSessionCard(session: TreatmentSession, photos: List<Treatmen
         }
         if (session.status == TreatmentSessionStatus.NO_SHOW) {
             Spacer(Modifier.height(6.dp))
-            Text("Buoi nay duoc ghi nhan khach khong den. Ban van co the chat voi tu van vien de hen lai.", color = Color(0xFFE8A44A), fontSize = 12.sp)
+            Text("Buoi nay duoc ghi nhan khach khong den. Buoi chua tinh hoan thanh, ban co the chon lich lai.", color = Color(0xFFE8A44A), fontSize = 12.sp)
+        }
+        if (needsSchedule) {
+            Spacer(Modifier.height(10.dp))
+            if (plan.consultantId.isBlank()) {
+                Text("Tu van vien can nhan lich dau tien truoc khi ban dat cac buoi tiep theo.", color = Color(0xFF8ACABA), fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+            }
+            Button(
+                onClick = onSchedule,
+                enabled = canSchedule,
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
+            ) {
+                Text(if (session.status == TreatmentSessionStatus.NO_SHOW) "Chon lich lai" else "Chon lich cho buoi nay", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
         }
         if (photos.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
@@ -364,6 +464,217 @@ private fun CustomerSessionCard(session: TreatmentSession, photos: List<Treatmen
         }
     }
 }
+
+@Composable
+private fun ScheduleSessionDialog(
+    session: TreatmentSession,
+    dateOptions: List<BookingDateOption>,
+    bookedSlotsByDate: Map<Long, Set<String>>,
+    onDismiss: () -> Unit,
+    onConfirm: (BookingDateOption, String) -> Unit
+) {
+    var selectedDate by remember { mutableStateOf(dateOptions.firstOrNull()) }
+    var selectedSlot by remember { mutableStateOf(SPA_BOOKING_SLOTS.first()) }
+    val availableSlots = remember(selectedDate, bookedSlotsByDate) {
+        val booked = selectedDate?.let { bookedSlotsByDate[it.startOfDayMillis] }.orEmpty()
+        SPA_BOOKING_SLOTS.filterNot { it in booked }
+    }
+    LaunchedEffect(selectedDate?.startOfDayMillis, bookedSlotsByDate) {
+        if (selectedSlot !in availableSlots) selectedSlot = availableSlots.firstOrNull().orEmpty()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        shape = RoundedCornerShape(20.dp),
+        title = { Text("Chon lich buoi ${session.sessionNumber}", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text("Chi chon duoc lich trong 1 thang toi. Khung gio da co lich se duoc an.", color = Color(0xFF6C8F87), fontSize = 12.sp)
+                Spacer(Modifier.height(10.dp))
+                CompactCalendar(dateOptions, selectedDate?.startOfDayMillis, bookedSlotsByDate) { selectedDate = it }
+                Spacer(Modifier.height(12.dp))
+                if (availableSlots.isEmpty()) {
+                    Text("Ngay nay da kin lich.", color = Color(0xFFE8A44A), fontSize = 13.sp)
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.heightIn(max = 120.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        userScrollEnabled = false
+                    ) {
+                        items(availableSlots) { slot ->
+                            val selected = selectedSlot == slot
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (selected) MintGreen else Color(0xFFF8FFFE))
+                                    .clickable { selectedSlot = slot }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(slot, color = if (selected) Color.White else Color(0xFF1A4A40), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val date = selectedDate ?: return@Button
+                    if (selectedSlot.isNotBlank()) onConfirm(date, selectedSlot)
+                },
+                enabled = selectedDate != null && selectedSlot.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
+            ) { Text("Gui lich") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Huy", color = MintGreen) } }
+    )
+}
+
+@Composable
+private fun CompactCalendar(
+    dateOptions: List<BookingDateOption>,
+    selectedDateMillis: Long?,
+    bookedSlotsByDate: Map<Long, Set<String>>,
+    onSelect: (BookingDateOption) -> Unit
+) {
+    val leadingBlanks = remember(dateOptions) {
+        val first = dateOptions.firstOrNull()?.startOfDayMillis ?: 0L
+        if (first == 0L) 0 else {
+            val dayOfWeek = Calendar.getInstance().apply { timeInMillis = first }.get(Calendar.DAY_OF_WEEK)
+            (dayOfWeek + 5) % 7
+        }
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(7),
+        modifier = Modifier.height(256.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        userScrollEnabled = false
+    ) {
+        items(List(leadingBlanks) { it }) {
+            Spacer(Modifier.aspectRatio(1f))
+        }
+        items(dateOptions) { option ->
+            val booked = bookedSlotsByDate[option.startOfDayMillis]?.size ?: 0
+            val full = booked >= SPA_BOOKING_SLOTS.size
+            val selected = selectedDateMillis == option.startOfDayMillis
+            Box(
+                modifier = Modifier
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        when {
+                            selected -> MintGreen
+                            full -> Color(0xFFF2F2F2)
+                            booked > 0 -> Color(0xFFFFFBF2)
+                            else -> Color(0xFFF8FFFE)
+                        }
+                    )
+                    .clickable(enabled = !full) { onSelect(option) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    option.label.substringBefore("/"),
+                    color = if (selected) Color.White else if (full) Color(0xFFB8B8B8) else Color(0xFF1A4A40),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+private suspend fun scheduleTreatmentSession(
+    db: FirebaseFirestore,
+    plan: TreatmentPlan,
+    session: TreatmentSession,
+    date: BookingDateOption,
+    slot: String
+) {
+    withContext(Dispatchers.IO) {
+        val (startAt, endAt) = appointmentTimeRange(date.startOfDayMillis, slot, plan.durationPerSessionMinutes)
+        val hasConflict = db.collection("appointments")
+            .whereEqualTo("startAt", startAt)
+            .get()
+            .await()
+            .documents
+            .any { AppointmentStatus.activeStatuses.contains(it.getString("status")) }
+        if (hasConflict) throw IllegalStateException("Khung gio nay vua co nguoi dat, vui long chon gio khac")
+        val appointment = SpaAppointment(
+            userId = plan.userId,
+            userEmail = plan.userEmail,
+            userName = plan.userName,
+            phoneNumber = plan.phoneNumber,
+            spaPackageId = plan.spaPackageId,
+            spaPackageName = "${plan.packageName} - Buoi ${session.sessionNumber}/${session.totalSessions}",
+            spaPackagePrice = 0.0,
+            durationMinutes = plan.durationPerSessionMinutes,
+            startAt = startAt,
+            endAt = endAt,
+            appointmentDateLabel = date.label,
+            timeSlotLabel = slot,
+            status = AppointmentStatus.ASSIGNED,
+            note = "Khach chon lich cho buoi ${session.sessionNumber}/${session.totalSessions}",
+            consultantId = plan.consultantId,
+            consultantEmail = plan.consultantEmail,
+            consultantName = plan.consultantName
+        )
+        val appointmentRef = db.collection("appointments").document()
+        val sessionRef = db.collection("treatment_sessions").document(session.id)
+        val slotRef = db.collection("appointment_slots").document(startAt.toString())
+        db.runTransaction { tx ->
+            val latestSession = tx.get(sessionRef)
+            val latestStatus = latestSession.getString("status") ?: session.status
+            val latestStartAt = latestSession.getLong("scheduledStartAt") ?: 0L
+            if (latestSession.getString("userId") != plan.userId || latestSession.getString("treatmentPlanId") != plan.id) {
+                throw IllegalStateException("Buoi dieu tri khong hop le")
+            }
+            if (latestStatus == TreatmentSessionStatus.SCHEDULED && latestStartAt > 0L) {
+                throw IllegalStateException("Buoi nay da duoc len lich")
+            }
+            val slotSnap = tx.get(slotRef)
+            if (slotSnap.exists() && slotSnap.getString("status") == "active") {
+                throw IllegalStateException("Khung gio nay vua co nguoi dat, vui long chon gio khac")
+            }
+            val now = System.currentTimeMillis()
+            tx.set(
+                slotRef,
+                mapOf(
+                    "startAt" to startAt,
+                    "endAt" to endAt,
+                    "dateLabel" to date.label,
+                    "timeSlotLabel" to slot,
+                    "appointmentId" to appointmentRef.id,
+                    "userId" to plan.userId,
+                    "consultantId" to plan.consultantId,
+                    "status" to "active",
+                    "updatedAt" to now,
+                    "createdAt" to now
+                )
+            )
+            tx.set(appointmentRef, appointment.toFirestoreMap(includeCreatedAt = true))
+            tx.update(
+                sessionRef,
+                mapOf(
+                    "appointmentId" to appointmentRef.id,
+                    "scheduledStartAt" to startAt,
+                    "scheduledEndAt" to endAt,
+                    "dateLabel" to date.label,
+                    "timeSlotLabel" to slot,
+                    "status" to TreatmentSessionStatus.SCHEDULED,
+                    "updatedAt" to now
+                )
+            )
+            null
+        }.await()
+    }
+}
+
+private const val DAY_MILLIS = 86_400_000L
 
 @Composable
 private fun ChatMessages(messages: List<ConsultationChatMessage>, currentUserId: String) {
@@ -427,6 +738,7 @@ private suspend fun sendCustomerMessage(
 }
 
 private fun sessionColor(status: String): Color = when (status) {
+    TreatmentSessionStatus.UNSCHEDULED -> Color(0xFF8ACABA)
     TreatmentSessionStatus.SCHEDULED -> Color(0xFF4A90D9)
     TreatmentSessionStatus.COMPLETED -> MintGreen
     TreatmentSessionStatus.CANCELLED -> Color(0xFFE57373)
@@ -436,6 +748,7 @@ private fun sessionColor(status: String): Color = when (status) {
 }
 
 private fun sessionBg(status: String): Color = when (status) {
+    TreatmentSessionStatus.UNSCHEDULED -> Color(0xFFF5F5F5)
     TreatmentSessionStatus.SCHEDULED -> Color(0xFFE8F0FB)
     TreatmentSessionStatus.COMPLETED -> Color(0xFFEAF9F5)
     TreatmentSessionStatus.CANCELLED -> Color(0xFFFFECEC)

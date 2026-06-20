@@ -514,6 +514,7 @@ private fun SpaTabContent(
     val categories = remember(packages) {
         listOf("Tat ca") + packages.map { it.category }.filter { it.isNotBlank() }.distinct()
     }
+    val packageImages = remember(packages) { packages.associate { it.id to it.imageUrl } }
     val filtered = packages.filter { item ->
         val matchCategory = selectedCategory == "Tat ca" || item.category == selectedCategory
         val matchSearch = searchQuery.isBlank() ||
@@ -637,6 +638,7 @@ private fun SpaTabContent(
                         isLoggedIn = currentUser != null,
                         isLoading = appointmentLoading,
                         appointments = appointments,
+                        packageImages = packageImages,
                         onGoLogin = onGoLogin,
                         onOpenChat = onGoAppointmentChat,
                         onCancel = { appointment ->
@@ -702,6 +704,7 @@ private fun SpaAppointmentHistorySection(
     isLoggedIn: Boolean,
     isLoading: Boolean,
     appointments: List<SpaAppointment>,
+    packageImages: Map<String, String>,
     onGoLogin: () -> Unit,
     onOpenChat: (SpaAppointment) -> Unit,
     onCancel: (SpaAppointment) -> Unit
@@ -744,6 +747,7 @@ private fun SpaAppointmentHistorySection(
                     appointments.forEach { appointment ->
                         CustomerAppointmentCard(
                             appointment = appointment,
+                            imageUrl = packageImages[appointment.spaPackageId].orEmpty(),
                             onOpenChat = { onOpenChat(appointment) },
                             onCancel = { onCancel(appointment) }
                         )
@@ -755,46 +759,60 @@ private fun SpaAppointmentHistorySection(
 }
 
 @Composable
-private fun CustomerAppointmentCard(appointment: SpaAppointment, onOpenChat: () -> Unit, onCancel: () -> Unit) {
+private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: String, onOpenChat: () -> Unit, onCancel: () -> Unit) {
     val meta = appointmentStatusMeta(appointment.status)
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(Color(0xFFF8FFFE))
-            .padding(12.dp)
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(appointment.spaPackageName, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(3.dp))
-                Text("${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}", color = Color(0xFF5A8A80), fontSize = 12.sp)
-                if (appointment.consultantName.isNotBlank() || appointment.consultantEmail.isNotBlank()) {
-                    Text("Tu van: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}", color = MintGreen, fontSize = 12.sp)
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(statusBg(appointment.status))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(meta.label, color = statusColor(appointment.status), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Box(
+            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFEAF9F5)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (imageUrl.isNotBlank()) {
+                AsyncImage(model = imageUrl, contentDescription = appointment.spaPackageName, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Icon(Icons.Default.Spa, contentDescription = null, tint = MintGreen, modifier = Modifier.size(28.dp))
             }
         }
-        if (appointment.status == AppointmentStatus.PENDING) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onCancel, contentPadding = PaddingValues(0.dp)) {
-                Icon(Icons.Default.Cancel, contentDescription = null, tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Huy lich", color = Color(0xFFE57373), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(appointment.spaPackageName, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(3.dp))
+                    Text("${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}", color = Color(0xFF5A8A80), fontSize = 12.sp)
+                    if (appointment.consultantName.isNotBlank() || appointment.consultantEmail.isNotBlank()) {
+                        Text("Tu van: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}", color = MintGreen, fontSize = 12.sp)
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(statusBg(appointment.status))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(meta.label, color = statusColor(appointment.status), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
-        } else if (appointment.consultantId.isNotBlank() && appointment.status in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED, AppointmentStatus.RESCHEDULED, AppointmentStatus.NO_SHOW)) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onOpenChat, contentPadding = PaddingValues(0.dp)) {
-                Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Chat tu van", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            if (appointment.status == AppointmentStatus.PENDING) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onCancel, contentPadding = PaddingValues(0.dp)) {
+                    Icon(Icons.Default.Cancel, contentDescription = null, tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Huy lich", color = Color(0xFFE57373), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else if (appointment.consultantId.isNotBlank() && appointment.status in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED, AppointmentStatus.RESCHEDULED, AppointmentStatus.NO_SHOW)) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onOpenChat, contentPadding = PaddingValues(0.dp)) {
+                    Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Chat tu van", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }

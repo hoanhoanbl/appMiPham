@@ -41,7 +41,7 @@ data class SpaPackageTypeMeta(
 
 val SPA_PACKAGE_TYPES = listOf(
     SpaPackageTypeMeta(SpaPackageType.SINGLE_SESSION, "Dich vu 1 buoi", "Khach dat lich va hoan thanh trong mot lan hen"),
-    SpaPackageTypeMeta(SpaPackageType.TREATMENT_TEMPLATE, "Lieu trinh nhieu buoi", "Tu van vien tao ke hoach rieng sau lich hen dau tien")
+    SpaPackageTypeMeta(SpaPackageType.TREATMENT_TEMPLATE, "Goi lieu trinh", "Goi spa tron goi voi so buoi co dinh do admin thiet lap")
 )
 
 fun spaPackageTypeMeta(type: String): SpaPackageTypeMeta =

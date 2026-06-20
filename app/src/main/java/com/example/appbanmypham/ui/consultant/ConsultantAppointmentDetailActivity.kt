@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,7 +25,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,9 +39,7 @@ import com.example.appbanmypham.model.ProgressPhotoPolicy
 import com.example.appbanmypham.model.ProgressPhotoType
 import com.example.appbanmypham.model.SpaAppointment
 import com.example.appbanmypham.model.SpaPackage
-import com.example.appbanmypham.model.SpaPackageType
 import com.example.appbanmypham.model.TreatmentPlan
-import com.example.appbanmypham.model.TreatmentPlanStatus
 import com.example.appbanmypham.model.TreatmentProgressPhoto
 import com.example.appbanmypham.model.TreatmentSession
 import com.example.appbanmypham.model.TreatmentSessionStatus
@@ -114,9 +110,6 @@ fun ConsultantAppointmentDetailScreen(
     var consultantNote by remember { mutableStateOf("") }
     var recommendationNote by remember { mutableStateOf("") }
     var messageText by remember { mutableStateOf("") }
-    var customPlanName by remember { mutableStateOf("") }
-    var customSessionCount by remember { mutableStateOf("3") }
-    var customDuration by remember { mutableStateOf("60") }
     var skipTarget by remember { mutableStateOf<TreatmentSession?>(null) }
     var skipReason by remember { mutableStateOf("") }
     var photoTarget by remember { mutableStateOf<Pair<TreatmentSession, String>?>(null) }
@@ -168,23 +161,42 @@ fun ConsultantAppointmentDetailScreen(
                 consultantNote = appointment?.consultantNote.orEmpty()
                 isLoading = false
             }
-        regs += db.collection("consultation_chat_threads").document(appointmentId)
-            .addSnapshotListener { snap, _ ->
-                chatThread = snap?.takeIf { it.exists() }?.let { runCatching { firestoreDocToConsultationChatThread(it) }.getOrNull() }
-            }
-        regs += db.collection("consultation_chat_messages")
-            .whereEqualTo("threadId", appointmentId)
-            .addSnapshotListener { snap, _ ->
-                messages = snap?.documents
-                    ?.mapNotNull { runCatching { firestoreDocToConsultationChatMessage(it) }.getOrNull() }
-                    ?.sortedBy { it.createdAt }
-                    ?: emptyList()
-            }
         regs += db.collection("treatment_plans")
             .whereEqualTo("appointmentId", appointmentId)
             .addSnapshotListener { snap, _ ->
                 treatmentPlan = snap?.documents?.firstOrNull()?.let { runCatching { firestoreDocToTreatmentPlan(it) }.getOrNull() }
                 recommendationNote = treatmentPlan?.recommendationNote.orEmpty()
+            }
+        regs += db.collection("treatment_sessions")
+            .whereEqualTo("appointmentId", appointmentId)
+            .addSnapshotListener { snap, _ ->
+                val planId = snap?.documents?.firstOrNull()?.getString("treatmentPlanId").orEmpty()
+                if (planId.isNotBlank() && treatmentPlan?.id != planId) {
+                    db.collection("treatment_plans").document(planId).get()
+                        .addOnSuccessListener { planSnap ->
+                            treatmentPlan = runCatching { firestoreDocToTreatmentPlan(planSnap) }.getOrNull()
+                            recommendationNote = treatmentPlan?.recommendationNote.orEmpty()
+                        }
+                }
+            }
+        onDispose { regs.forEach { it.remove() } }
+    }
+
+    DisposableEffect(appointmentId, treatmentPlan?.chatThreadId) {
+        val targetThreadId = treatmentPlan?.chatThreadId?.takeIf { it.isNotBlank() } ?: appointmentId
+        if (targetThreadId.isBlank()) return@DisposableEffect onDispose {}
+        val regs = mutableListOf<ListenerRegistration>()
+        regs += db.collection("consultation_chat_threads").document(targetThreadId)
+            .addSnapshotListener { snap, _ ->
+                chatThread = snap?.takeIf { it.exists() }?.let { runCatching { firestoreDocToConsultationChatThread(it) }.getOrNull() }
+            }
+        regs += db.collection("consultation_chat_messages")
+            .whereEqualTo("threadId", targetThreadId)
+            .addSnapshotListener { snap, _ ->
+                messages = snap?.documents
+                    ?.mapNotNull { runCatching { firestoreDocToConsultationChatMessage(it) }.getOrNull() }
+                    ?.sortedBy { it.createdAt }
+                    ?: emptyList()
             }
         onDispose { regs.forEach { it.remove() } }
     }
@@ -223,9 +235,10 @@ fun ConsultantAppointmentDetailScreen(
         onDispose { regs.forEach { it.remove() } }
     }
 
-    LaunchedEffect(currentAppointment?.id, currentAppointment?.consultantId, chatThread?.id) {
+    LaunchedEffect(currentAppointment?.id, currentAppointment?.consultantId, treatmentPlan?.chatThreadId, chatThread?.id) {
         val appt = currentAppointment ?: return@LaunchedEffect
-        if (appt.consultantId.isNotBlank() && chatThread == null) {
+        val planThreadId = treatmentPlan?.chatThreadId.orEmpty()
+        if (appt.consultantId.isNotBlank() && chatThread == null && planThreadId.isBlank()) {
             runCatching { ensureChatThread(db, appt, treatmentPlan?.id.orEmpty()) }
         }
     }
@@ -349,37 +362,11 @@ fun ConsultantAppointmentDetailScreen(
                     DetailCard {
                         SectionTitle(Icons.Default.Spa, "Lieu trinh")
                         if (treatmentPlan == null) {
-                            CreatePlanPanel(
-                                appointment = currentAppointment,
-                                spaPackage = spaPackage,
-                                customPlanName = customPlanName,
-                                onCustomPlanNameChange = { customPlanName = it },
-                                customSessionCount = customSessionCount,
-                                onCustomSessionCountChange = { customSessionCount = it },
-                                customDuration = customDuration,
-                                onCustomDurationChange = { customDuration = it },
-                                recommendationNote = recommendationNote,
-                                onRecommendationNoteChange = { recommendationNote = it },
-                                canManage = canManage && !isBusy,
-                                onCreatePlan = {
-                                    scope.launch {
-                                        isBusy = true
-                                        val result = runCatching {
-                                            createTreatmentPlanFromAppointment(
-                                                db = db,
-                                                appointment = currentAppointment,
-                                                spaPackage = spaPackage,
-                                                customPlanName = customPlanName.trim(),
-                                                customSessionCount = customSessionCount.toIntOrNull() ?: 1,
-                                                customDuration = customDuration.toIntOrNull() ?: currentAppointment.durationMinutes,
-                                                consultationNote = consultantNote.trim(),
-                                                recommendationNote = recommendationNote.trim()
-                                            )
-                                        }
-                                        snackbarHostState.showSnackbar(if (result.isSuccess) "Da tao lieu trinh" else result.exceptionOrNull()?.message ?: "Tao lieu trinh that bai")
-                                        isBusy = false
-                                    }
-                                }
+                            Text(
+                                "Lieu trinh nhieu buoi duoc tao tu goi spa ngay khi khach dat lich. Neu day la dich vu 1 buoi thi khong can tao lieu trinh rieng.",
+                                color = Color(0xFF6C8F87),
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp
                             )
                         } else {
                             treatmentPlan?.let { TreatmentPlanSummary(plan = it) }
@@ -632,88 +619,6 @@ private fun ChatMessages(messages: List<ConsultationChatMessage>, currentUserId:
 }
 
 @Composable
-private fun CreatePlanPanel(
-    appointment: SpaAppointment,
-    spaPackage: SpaPackage?,
-    customPlanName: String,
-    onCustomPlanNameChange: (String) -> Unit,
-    customSessionCount: String,
-    onCustomSessionCountChange: (String) -> Unit,
-    customDuration: String,
-    onCustomDurationChange: (String) -> Unit,
-    recommendationNote: String,
-    onRecommendationNoteChange: (String) -> Unit,
-    canManage: Boolean,
-    onCreatePlan: () -> Unit
-) {
-    val isTemplate = spaPackage?.packageType == SpaPackageType.TREATMENT_TEMPLATE
-    Text(
-        if (isTemplate) "Goi nay la template lieu trinh. Tao ke hoach rieng cho khach tu thong tin goi." else "Goi nay la dich vu le. Ban co the tao lieu trinh tuy chinh neu can.",
-        color = Color(0xFF5A8A80),
-        fontSize = 13.sp
-    )
-    Spacer(Modifier.height(10.dp))
-    if (!isTemplate) {
-        OutlinedTextField(
-            value = customPlanName,
-            onValueChange = onCustomPlanNameChange,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = canManage,
-            label = { Text("Ten lieu trinh tuy chinh") },
-            placeholder = { Text(appointment.spaPackageName) },
-            colors = detailTextFieldColors(),
-            shape = RoundedCornerShape(14.dp)
-        )
-        Spacer(Modifier.height(8.dp))
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = if (isTemplate) (spaPackage?.sessionCount ?: 1).toString() else customSessionCount,
-            onValueChange = onCustomSessionCountChange,
-            modifier = Modifier.weight(1f),
-            enabled = canManage && !isTemplate,
-            label = { Text("So buoi") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            colors = detailTextFieldColors(),
-            shape = RoundedCornerShape(14.dp)
-        )
-        OutlinedTextField(
-            value = if (isTemplate) (spaPackage?.durationPerSessionMinutes ?: appointment.durationMinutes).toString() else customDuration,
-            onValueChange = onCustomDurationChange,
-            modifier = Modifier.weight(1f),
-            enabled = canManage && !isTemplate,
-            label = { Text("Phut/buoi") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            colors = detailTextFieldColors(),
-            shape = RoundedCornerShape(14.dp)
-        )
-    }
-    if (spaPackage?.requiresProgressPhotos == true) {
-        Spacer(Modifier.height(8.dp))
-        Text("Anh tien trinh: ${progressPhotoPolicyMeta(spaPackage.photoPolicy).label}", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        if (spaPackage.photoGuide.isNotBlank()) Text(spaPackage.photoGuide, color = Color(0xFF6C8F87), fontSize = 12.sp)
-    }
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        value = recommendationNote,
-        onValueChange = onRecommendationNoteChange,
-        modifier = Modifier.fillMaxWidth().height(86.dp),
-        enabled = canManage,
-        label = { Text("De xuat lieu trinh hien cho khach") },
-        colors = detailTextFieldColors(),
-        shape = RoundedCornerShape(14.dp)
-    )
-    Spacer(Modifier.height(10.dp))
-    Button(
-        onClick = onCreatePlan,
-        enabled = canManage,
-        modifier = Modifier.fillMaxWidth(),
-        colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
-        shape = RoundedCornerShape(14.dp)
-    ) { Text("Tao lieu trinh") }
-}
-
-@Composable
 private fun TreatmentPlanSummary(plan: TreatmentPlan) {
     InfoText("Ten", plan.packageName)
     InfoText("Trang thai", plan.status)
@@ -735,6 +640,7 @@ private fun TreatmentSessionCard(
     onReschedule: () -> Unit
 ) {
     val meta = treatmentSessionStatusMeta(session.status)
+    val hasConcreteSchedule = session.scheduledStartAt > 0L && session.timeSlotLabel.isNotBlank()
     Column(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFFF8FFFE)).padding(12.dp)
     ) {
@@ -782,7 +688,10 @@ private fun TreatmentSessionCard(
             Spacer(Modifier.height(6.dp))
             Text("Bo qua anh: ${session.photoSkipReason}", color = Color(0xFFE8A44A), fontSize = 12.sp)
         }
-        if (session.status == TreatmentSessionStatus.SCHEDULED || session.status == TreatmentSessionStatus.RESCHEDULED) {
+        if (!hasConcreteSchedule && session.status in setOf(TreatmentSessionStatus.UNSCHEDULED, TreatmentSessionStatus.SCHEDULED, TreatmentSessionStatus.RESCHEDULED)) {
+            Spacer(Modifier.height(8.dp))
+            Text("Dang cho khach chon ngay gio cho buoi nay.", color = Color(0xFF8ACABA), fontSize = 12.sp)
+        } else if (session.status == TreatmentSessionStatus.SCHEDULED || session.status == TreatmentSessionStatus.RESCHEDULED) {
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onCancel, enabled = canManage, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE57373))) {
@@ -875,93 +784,6 @@ private suspend fun ensureChatThread(
             ),
             SetOptions.merge()
         ).await()
-    }
-}
-
-private suspend fun createTreatmentPlanFromAppointment(
-    db: FirebaseFirestore,
-    appointment: SpaAppointment,
-    spaPackage: SpaPackage?,
-    customPlanName: String,
-    customSessionCount: Int,
-    customDuration: Int,
-    consultationNote: String,
-    recommendationNote: String
-) {
-    withContext(Dispatchers.IO) {
-        if (appointment.consultantId.isBlank()) throw IllegalStateException("Lich chua co tu van vien")
-        val isTemplate = spaPackage?.packageType == SpaPackageType.TREATMENT_TEMPLATE
-        val sessionCount = if (isTemplate) spaPackage?.sessionCount ?: 1 else customSessionCount.coerceAtLeast(1)
-        val duration = if (isTemplate) {
-            spaPackage?.durationPerSessionMinutes?.takeIf { it > 0 } ?: appointment.durationMinutes
-        } else {
-            customDuration.coerceAtLeast(1)
-        }
-        val plan = TreatmentPlan(
-            appointmentId = appointment.id,
-            userId = appointment.userId,
-            userEmail = appointment.userEmail,
-            userName = appointment.userName,
-            phoneNumber = appointment.phoneNumber,
-            consultantId = appointment.consultantId,
-            consultantEmail = appointment.consultantEmail,
-            consultantName = appointment.consultantName,
-            spaPackageId = appointment.spaPackageId,
-            packageName = if (isTemplate) spaPackage?.name ?: appointment.spaPackageName else customPlanName.ifBlank { appointment.spaPackageName },
-            packageType = if (isTemplate) SpaPackageType.TREATMENT_TEMPLATE else SpaPackageType.SINGLE_SESSION,
-            category = spaPackage?.category.orEmpty(),
-            totalPrice = spaPackage?.price ?: appointment.spaPackagePrice,
-            sessionCount = sessionCount,
-            durationPerSessionMinutes = duration,
-            suggestedIntervalDays = spaPackage?.suggestedIntervalDays ?: 7,
-            requiresProgressPhotos = spaPackage?.requiresProgressPhotos == true,
-            photoPolicy = spaPackage?.photoPolicy ?: ProgressPhotoPolicy.NONE,
-            photoGuide = spaPackage?.photoGuide.orEmpty(),
-            status = TreatmentPlanStatus.ACTIVE,
-            consultationNote = consultationNote,
-            recommendationNote = recommendationNote,
-            chatThreadId = appointment.id
-        )
-        val planRef = db.collection("treatment_plans").add(plan.toFirestoreMap(includeCreatedAt = true)).await()
-        val batch = db.batch()
-        for (number in 1..sessionCount) {
-            val sessionRef = db.collection("treatment_sessions").document()
-            val isFirst = number == 1
-            val session = TreatmentSession(
-                treatmentPlanId = planRef.id,
-                appointmentId = if (isFirst) appointment.id else "",
-                userId = appointment.userId,
-                consultantId = appointment.consultantId,
-                spaPackageId = appointment.spaPackageId,
-                packageName = plan.packageName,
-                sessionNumber = number,
-                totalSessions = sessionCount,
-                scheduledStartAt = if (isFirst) appointment.startAt else 0L,
-                scheduledEndAt = if (isFirst) appointment.endAt else 0L,
-                dateLabel = if (isFirst) appointment.appointmentDateLabel else "",
-                timeSlotLabel = if (isFirst) appointment.timeSlotLabel else "",
-                requiresProgressPhotos = plan.requiresProgressPhotos,
-                photoPolicy = plan.photoPolicy
-            )
-            batch.set(sessionRef, session.toFirestoreMap(includeCreatedAt = true))
-        }
-        batch.set(
-            db.collection("consultation_chat_threads").document(appointment.id),
-            mapOf(
-                "appointmentId" to appointment.id,
-                "treatmentPlanId" to planRef.id,
-                "userId" to appointment.userId,
-                "userEmail" to appointment.userEmail,
-                "userName" to appointment.userName,
-                "consultantId" to appointment.consultantId,
-                "consultantEmail" to appointment.consultantEmail,
-                "consultantName" to appointment.consultantName,
-                "status" to ChatThreadStatus.ACTIVE,
-                "updatedAt" to System.currentTimeMillis()
-            ),
-            SetOptions.merge()
-        )
-        batch.commit().await()
     }
 }
 
@@ -1062,6 +884,7 @@ private fun missingRequiredPhotoTypes(session: TreatmentSession, photos: List<Tr
 }
 
 private fun sessionStatusColor(status: String): Color = when (status) {
+    TreatmentSessionStatus.UNSCHEDULED -> Color(0xFF8ACABA)
     TreatmentSessionStatus.SCHEDULED -> Color(0xFF4A90D9)
     TreatmentSessionStatus.COMPLETED -> MintGreen
     TreatmentSessionStatus.CANCELLED -> Color(0xFFE57373)
@@ -1071,6 +894,7 @@ private fun sessionStatusColor(status: String): Color = when (status) {
 }
 
 private fun sessionStatusBg(status: String): Color = when (status) {
+    TreatmentSessionStatus.UNSCHEDULED -> Color(0xFFF5F5F5)
     TreatmentSessionStatus.SCHEDULED -> Color(0xFFE8F0FB)
     TreatmentSessionStatus.COMPLETED -> Color(0xFFEAF9F5)
     TreatmentSessionStatus.CANCELLED -> Color(0xFFFFECEC)
