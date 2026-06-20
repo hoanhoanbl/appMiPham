@@ -22,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -30,7 +29,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.appbanmypham.model.AppRoles
 import com.example.appbanmypham.ui.admin.DashboardActivity
+import com.example.appbanmypham.ui.consultant.ConsultantDashboardActivity
+import com.example.appbanmypham.ui.product.BookSpaAppointmentActivity
 import com.example.appbanmypham.ui.product.ProductActivity
 import com.example.appbanmypham.ui.theme.*
 import com.google.firebase.auth.FirebaseAuth
@@ -43,14 +45,17 @@ class LoginActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Nếu đã đăng nhập rồi thì bỏ qua màn login
-        if (FirebaseAuth.getInstance().currentUser != null) {
-            startActivity(
-                Intent(this, ProductActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                }
-            )
-            finish()
+        val auth = FirebaseAuth.getInstance()
+        val db = FirebaseFirestore.getInstance()
+        val redirectToSpaBooking = intent.getBooleanExtra("redirect_to_spa_booking", false)
+        val redirectSpaPackageId = intent.getStringExtra("spa_package_id")
+
+        // Role: 0 = customer, 1 = admin, 2 = consultant.
+        if (auth.currentUser != null) {
+            CoroutineScope(Dispatchers.Main).launch {
+                val role = readUserRole(db, auth.currentUser?.uid)
+                navigateToRole(role, redirectToSpaBooking, redirectSpaPackageId)
+            }
             return
         }
 
@@ -59,6 +64,9 @@ class LoginActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = BackgroundPrimary) {
                     LoginScreen(
                         onGoRegister = { startActivity(Intent(this, RegisterActivity::class.java)) },
+                        onLoginSuccess = { role ->
+                            navigateToRole(role, redirectToSpaBooking, redirectSpaPackageId)
+                        },
                         onGoHome = {
                             startActivity(Intent(this, ProductActivity::class.java).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -69,14 +77,43 @@ class LoginActivity : ComponentActivity() {
             }
         }
     }
+
+    private suspend fun readUserRole(db: FirebaseFirestore, uid: String?): Int {
+        if (uid.isNullOrBlank()) return AppRoles.CUSTOMER
+        return try {
+            withTimeout(5_000L) {
+                withContext(Dispatchers.IO) {
+                    db.collection("users").document(uid).get().await()
+                }.getLong("role")?.toInt() ?: AppRoles.CUSTOMER
+            }
+        } catch (_: Exception) {
+            AppRoles.CUSTOMER
+        }
+    }
+
+    private fun navigateToRole(role: Int, redirectToSpaBooking: Boolean = false, spaPackageId: String? = null) {
+        val intent = when {
+            redirectToSpaBooking && !spaPackageId.isNullOrBlank() && role == AppRoles.CUSTOMER ->
+                Intent(this, BookSpaAppointmentActivity::class.java).putExtra("spa_package_id", spaPackageId)
+            role == AppRoles.ADMIN -> Intent(this, DashboardActivity::class.java)
+            role == AppRoles.CONSULTANT -> Intent(this, ConsultantDashboardActivity::class.java)
+            else -> Intent(this, ProductActivity::class.java)
+        }
+        startActivity(
+            intent.apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            }
+        )
+        finish()
+    }
 }
 
 @Composable
 fun LoginScreen(
     onGoRegister: () -> Unit = {},
+    onLoginSuccess: (Int) -> Unit = {},
     onGoHome: () -> Unit = {}
 ) {
-    val context = LocalContext.current
     val auth    = remember { FirebaseAuth.getInstance() }
     val db      = remember { FirebaseFirestore.getInstance() }
     val scope   = rememberCoroutineScope()
@@ -86,14 +123,6 @@ fun LoginScreen(
     var showPass  by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMsg  by remember { mutableStateOf("") }
-
-    fun navigateTo(cls: Class<*>) {
-        context.startActivity(
-            Intent(context, cls).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            }
-        )
-    }
 
     fun doLogin() {
         if (email.isBlank() || password.isBlank()) {
@@ -122,19 +151,16 @@ fun LoginScreen(
                             val doc = withContext(Dispatchers.IO) {
                                 db.collection("users").document(uid).get().await()
                             }
-                            doc.getLong("role")?.toInt() ?: 0
+                            doc.getLong("role")?.toInt() ?: AppRoles.CUSTOMER
                         }
                     } catch (e: Exception) {
                         // Firestore lỗi/offline → dùng role mặc định (user thường)
-                        0
+                        AppRoles.CUSTOMER
                     }
 
                     // Bước 3: Navigate
                     isLoading = false
-                    navigateTo(
-                        if (role == 1) DashboardActivity::class.java
-                        else ProductActivity::class.java
-                    )
+                    onLoginSuccess(role)
                 }
 
             } catch (e: TimeoutCancellationException) {

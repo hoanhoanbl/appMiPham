@@ -37,6 +37,7 @@ import coil.compose.AsyncImage
 import com.example.appbanmypham.data.CloudinaryHelper          // ← THÊM import này
 import com.example.appbanmypham.data.local.AppDatabase
 import com.example.appbanmypham.model.Product
+import com.example.appbanmypham.model.ProductCategories
 import com.example.appbanmypham.ui.theme.*
 import com.google.firebase.firestore.FirebaseFirestore
 // ĐÃ XOÁ: import com.google.firebase.storage.FirebaseStorage
@@ -468,9 +469,19 @@ private fun ProductDialog(
     var price         by remember { mutableStateOf(existing?.price?.toString() ?: "") }
     var stock         by remember { mutableStateOf(existing?.stock?.toString() ?: "") }
     var description   by remember { mutableStateOf(existing?.description ?: "") }
-    var category      by remember { mutableStateOf(existing?.category ?: "") }
+    var category      by remember {
+        mutableStateOf(
+            existing?.category
+                ?.takeIf { it in ProductCategories.VALUES }
+                ?: ProductCategories.normalize(
+                    existing?.category.orEmpty(),
+                    "${existing?.name.orEmpty()} ${existing?.description.orEmpty()}"
+                )
+        )
+    }
     var selectedBrand by remember { mutableStateOf(brands.find { it.id == existing?.brandId }) }
     var imageUri      by remember { mutableStateOf<Uri?>(null) }
+    var categoryExpanded by remember { mutableStateOf(false) }
     var brandExpanded by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -568,8 +579,49 @@ private fun ProductDialog(
 
                 Spacer(Modifier.height(10.dp))
 
-                DialogLabel("Danh mục")
-                DialogTextField(value = category, onValueChange = { category = it }, placeholder = "VD: Kem dưỡng, Son môi...")
+                DialogLabel("Danh mục *")
+                ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = it }) {
+                    OutlinedTextField(
+                        value = category,
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MintGreen,
+                            unfocusedBorderColor = Color(0xFFB2E8DA),
+                            focusedTextColor = Color(0xFF1A4A40),
+                            unfocusedTextColor = Color(0xFF1A4A40)
+                        )
+                    )
+                    ExposedDropdownMenu(
+                        expanded = categoryExpanded,
+                        onDismissRequest = { categoryExpanded = false },
+                        modifier = Modifier.background(Color.White)
+                    ) {
+                        ProductCategories.VALUES.forEach { item ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        item,
+                                        color = if (item == category) MintGreen else Color(0xFF1A4A40),
+                                        fontWeight = if (item == category) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                },
+                                leadingIcon = {
+                                    if (item == category) {
+                                        Icon(Icons.Default.Check, contentDescription = null, tint = MintGreen)
+                                    }
+                                },
+                                onClick = {
+                                    category = item
+                                    categoryExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(10.dp))
 
@@ -634,7 +686,10 @@ private fun ProductDialog(
                         colors   = ButtonDefaults.outlinedButtonColors(contentColor = MintGreen)
                     ) { Text("Huỷ") }
 
-                    val isValid = name.isNotBlank() && price.isNotBlank() && stock.isNotBlank()
+                    val isValid = name.isNotBlank() &&
+                            price.isNotBlank() &&
+                            stock.isNotBlank() &&
+                            category in ProductCategories.VALUES
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -657,7 +712,7 @@ private fun ProductDialog(
                                         brandId     = selectedBrand?.id ?: "",
                                         brandName   = selectedBrand?.name ?: "",
                                         imageUrl    = existing?.imageUrl ?: "",
-                                        category    = category.trim(),
+                                        category    = category,
                                         isHidden    = existing?.isHidden ?: false
                                     ),
                                     imageUri

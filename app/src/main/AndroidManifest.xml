@@ -37,9 +37,30 @@
         <activity android:name=".ui.product.ProductActivity"/>
         <activity android:name=".ui.admin.ManageProductActivity" />
         <activity android:name=".ui.admin.ManageBrandActivity" />
+        <activity android:name=".ui.admin.ManageSpaPackageActivity" />
+        <activity android:name=".ui.admin.ManageSpaAppointmentActivity" />
+        <activity android:name=".ui.admin.ManageTreatmentActivity" />
+        <activity android:name=".ui.consultant.ConsultantDashboardActivity" />
+        <activity android:name=".ui.consultant.ConsultantAppointmentDetailActivity" />
         <activity android:name=".ui.cart.CartActivity"/>
         <activity
             android:name=".ui.product.ProductDetailsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.product.ProductActivity" />
+        <activity
+            android:name=".ui.product.SpaPackageDetailsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.product.ProductActivity" />
+        <activity
+            android:name=".ui.product.BookSpaAppointmentActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.product.SpaPackageDetailsActivity" />
+        <activity
+            android:name=".ui.product.CustomerTreatmentPlanActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.product.ProductActivity" />
+        <activity
+            android:name=".ui.product.CustomerAppointmentChatActivity"
             android:exported="false"
             android:parentActivityName=".ui.product.ProductActivity" />
         <activity android:name=".ui.checkout.CheckoutActivity"

@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.appbanmypham.model.AppRoles
 import com.example.appbanmypham.ui.theme.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -75,12 +76,12 @@ fun RegisterScreen(
             .addOnSuccessListener { result ->
                 val uid = result.user?.uid ?: return@addOnSuccessListener
 
-                // Lưu thông tin user vào Firestore với role = 0
+                // Role: 0 = customer, 1 = admin, 2 = consultant.
                 val db = FirebaseFirestore.getInstance()
                 val userMap = hashMapOf(
                     "uid"   to uid,
                     "email" to email.trim(),
-                    "role"  to 0,        // 0 = khách hàng, 1 = admin
+                    "role"  to AppRoles.CUSTOMER,
                     "createdAt" to System.currentTimeMillis()
                 )
 

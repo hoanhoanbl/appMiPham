@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -321,85 +322,96 @@ fun OrderScreen(onBack: () -> Unit = {}) {
         containerColor = BackgroundPrimary,
         snackbarHost   = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Column {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(brush = AppGradients.mintHorizontal)
-                        .statusBarsPadding()
-                        .padding(horizontal = 4.dp, vertical = 4.dp)
-                ) {
-                    IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
-                        Icon(Icons.Default.ArrowBack, null, tint = Color.White)
-                    }
-                    Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Đơn hàng của tôi", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        if (orders.isNotEmpty())
-                            Text("${orders.size} đơn hàng", color = Color.White.copy(0.75f), fontSize = 11.sp)
-                    }
-                    if (isSyncing)
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp).align(Alignment.CenterEnd).padding(end = 16.dp), strokeWidth = 2.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(brush = AppGradients.mintHorizontal)
+                    .statusBarsPadding()
+                    .padding(horizontal = 4.dp, vertical = 8.dp)
+            ) {
+                IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Default.ArrowBack, null, tint = Color.White)
                 }
-                // Filter tabs
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().background(Color.White),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(ORDER_TABS) { tab ->
-                        val isSelected = tab.key == filterKey
-                        val count = if (tab.key == null) orders.size else orders.count { it.status == tab.key }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(if (isSelected) AppGradients.mintHorizontal else androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xFFEAF9F5), Color(0xFFEAF9F5))))
-                                .clickable { filterKey = tab.key }
-                                .padding(horizontal = 14.dp, vertical = 7.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Text(tab.label, color = if (isSelected) Color.White else MintGreen, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal)
-                                if (count > 0) Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(if (isSelected) Color.White.copy(0.3f) else MintGreen.copy(0.15f)), contentAlignment = Alignment.Center) {
-                                    Text("$count", color = if (isSelected) Color.White else MintGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
+                Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Đơn hàng", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Theo dõi mua sắm của bạn", color = Color.White.copy(0.78f), fontSize = 11.sp)
+                }
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        modifier = Modifier.size(20.dp).align(Alignment.CenterEnd).padding(end = 16.dp),
+                        strokeWidth = 2.dp
+                    )
                 }
             }
         }
     ) { padding ->
-        when {
-            isSyncing && orders.isEmpty() -> Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = MintGreen)
-                    Spacer(Modifier.height(12.dp))
-                    Text("Đang tải đơn hàng...", color = Color(0xFF8ACABA), fontSize = 13.sp)
-                }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                OrderDashboardPanel(
+                    orders = orders,
+                    selectedStatus = filterKey,
+                    onStatusClick = { filterKey = it }
+                )
             }
-            !isSyncing && orders.isEmpty() -> EmptyOrdersView(modifier = Modifier.padding(padding))
-            filtered.isEmpty() -> Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("📋", fontSize = 48.sp); Spacer(Modifier.height(8.dp))
-                    Text("Không có đơn hàng nào", color = Color(0xFF8ACABA), fontSize = 15.sp)
-                }
+            item {
+                OrderFilterRow(
+                    orders = orders,
+                    selected = filterKey,
+                    onSelect = { filterKey = it }
+                )
             }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(filtered, key = { it.id }) { order ->
-                    OrderCard(
-                        order           = order,
-                        myReviews       = allMyReviews.filter { it.userId == uid },
-                        myReturn        = myReturns.firstOrNull { it.orderId == order.id },
-                        onViewDetail    = { detailOrder = order },
-                        onCancel        = if (order.status == "pending") { { cancelTarget = order } } else null,
-                        onReviewItem    = { item -> reviewTarget = Pair(order, item) },
-                        onRequestReturn = { returnTarget = order }
+
+            when {
+                isSyncing && orders.isEmpty() -> item {
+                    OrderInlineState(
+                        icon = Icons.Default.Sync,
+                        title = "Đang tải đơn hàng...",
+                        description = "Dữ liệu đang được đồng bộ từ tài khoản của bạn.",
+                        loading = true
                     )
                 }
-                item { Spacer(Modifier.height(24.dp)) }
+                !isSyncing && orders.isEmpty() -> item {
+                    OrderInlineState(
+                        icon = Icons.Default.ShoppingBag,
+                        title = "Chưa có đơn hàng nào",
+                        description = "Các đơn mỹ phẩm sau khi mua sẽ xuất hiện ở đây."
+                    )
+                }
+                filtered.isEmpty() -> item {
+                    OrderInlineState(
+                        icon = Icons.Default.ReceiptLong,
+                        title = "Không có đơn hàng nào",
+                        description = "Thử chọn trạng thái khác để xem thêm đơn hàng."
+                    )
+                }
+                else -> {
+                    item {
+                        Text(
+                            "Danh sách đơn hàng",
+                            color = Color(0xFF1A4A40),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    items(filtered, key = { it.id }) { order ->
+                        OrderCard(
+                            order           = order,
+                            myReviews       = allMyReviews.filter { it.userId == uid },
+                            myReturn        = myReturns.firstOrNull { it.orderId == order.id },
+                            onViewDetail    = { detailOrder = order },
+                            onCancel        = if (order.status == "pending") { { cancelTarget = order } } else null,
+                            onReviewItem    = { item -> reviewTarget = Pair(order, item) },
+                            onRequestReturn = { returnTarget = order }
+                        )
+                    }
+                    item { Spacer(Modifier.height(24.dp)) }
+                }
             }
         }
     }
@@ -408,6 +420,192 @@ fun OrderScreen(onBack: () -> Unit = {}) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Empty state
 // ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun OrderDashboardPanel(
+    orders: List<OrderEntity>,
+    selectedStatus: String?,
+    onStatusClick: (String?) -> Unit
+) {
+    val completedTotal = remember(orders) {
+        orders.filter { it.status == "done" }.sumOf { it.totalPrice }
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(3.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFEAF9F5)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MintGreen, modifier = Modifier.size(24.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Quản lý đơn hàng", color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("${orders.size} đơn trong tài khoản", color = Color(0xFF8ACABA), fontSize = 12.sp)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("${"%,.0f".format(completedTotal)}đ", color = Color(0xFFFF7A1A), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text("đã hoàn tất", color = Color(0xFFAAD8CE), fontSize = 11.sp)
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OrderStatusShortcut(
+                    title = "Chờ xác nhận",
+                    count = orders.count { it.status == "pending" },
+                    icon = Icons.Default.PendingActions,
+                    selected = selectedStatus == "pending",
+                    onClick = { onStatusClick("pending") },
+                    modifier = Modifier.weight(1f)
+                )
+                OrderStatusShortcut(
+                    title = "Đang xử lý",
+                    count = orders.count { it.status == "confirmed" },
+                    icon = Icons.Default.Inventory2,
+                    selected = selectedStatus == "confirmed",
+                    onClick = { onStatusClick("confirmed") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                OrderStatusShortcut(
+                    title = "Đang giao",
+                    count = orders.count { it.status == "shipping" },
+                    icon = Icons.Default.LocalShipping,
+                    selected = selectedStatus == "shipping",
+                    onClick = { onStatusClick("shipping") },
+                    modifier = Modifier.weight(1f)
+                )
+                OrderStatusShortcut(
+                    title = "Hoàn tất",
+                    count = orders.count { it.status == "done" },
+                    icon = Icons.Default.CheckCircle,
+                    selected = selectedStatus == "done",
+                    onClick = { onStatusClick("done") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrderStatusShortcut(
+    title: String,
+    count: Int,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .height(76.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) Color(0xFFEAF9F5) else Color(0xFFF8FFFE))
+            .border(
+                width = 1.dp,
+                color = if (selected) MintGreen.copy(alpha = 0.45f) else Color(0xFFEAF9F5),
+                shape = RoundedCornerShape(14.dp)
+            )
+            .clickable { onClick() }
+            .padding(10.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Icon(icon, contentDescription = null, tint = MintGreen, modifier = Modifier.size(20.dp))
+                Text("$count", color = Color(0xFF1A4A40), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(title, color = Color(0xFF4A7A70), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun OrderFilterRow(
+    orders: List<OrderEntity>,
+    selected: String?,
+    onSelect: (String?) -> Unit
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(ORDER_TABS) { tab ->
+            val isSelected = tab.key == selected
+            val count = if (tab.key == null) orders.size else orders.count { it.status == tab.key }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(
+                        if (isSelected) AppGradients.mintHorizontal
+                        else androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.White, Color.White))
+                    )
+                    .border(
+                        1.dp,
+                        if (isSelected) Color.Transparent else Color(0xFFEAF9F5),
+                        RoundedCornerShape(20.dp)
+                    )
+                    .clickable { onSelect(tab.key) }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tab.label, color = if (isSelected) Color.White else MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    if (count > 0) {
+                        Box(
+                            modifier = Modifier.size(18.dp).clip(CircleShape)
+                                .background(if (isSelected) Color.White.copy(0.28f) else MintGreen.copy(0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("$count", color = if (isSelected) Color.White else MintGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrderInlineState(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    loading: Boolean = false
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 30.dp, horizontal = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (loading) {
+                CircularProgressIndicator(color = MintGreen, modifier = Modifier.size(34.dp), strokeWidth = 3.dp)
+            } else {
+                Box(
+                    modifier = Modifier.size(58.dp).clip(CircleShape).background(Color(0xFFEAF9F5)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = null, tint = MintGreen, modifier = Modifier.size(30.dp))
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(title, color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(5.dp))
+            Text(description, color = Color(0xFF8ACABA), fontSize = 13.sp, textAlign = TextAlign.Center, lineHeight = 18.sp)
+        }
+    }
+}
+
 @Composable
 private fun EmptyOrdersView(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
