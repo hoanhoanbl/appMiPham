@@ -108,14 +108,26 @@ fun ManageReturnScreen(onBack: () -> Unit = {}) {
     val filtered = requests.filter { filterStatus == null || it.status == filterStatus }
 
     fun updateStatus(req: ReturnRequest, newStatus: String, adminNote: String = "") {
-        db.collection("return_requests").document(req.id)
-            .update(
+        val now = System.currentTimeMillis()
+        val batch = db.batch()
+        batch.update(
+            db.collection("return_requests").document(req.id),
+            mapOf(
+                "status"    to newStatus,
+                "adminNote" to adminNote,
+                "updatedAt" to now
+            )
+        )
+        if (newStatus == "completed") {
+            batch.update(
+                db.collection("orders").document(req.orderId),
                 mapOf(
-                    "status"    to newStatus,
-                    "adminNote" to adminNote,
-                    "updatedAt" to System.currentTimeMillis()
+                    "status" to "returned",
+                    "updatedAt" to now
                 )
             )
+        }
+        batch.commit()
             .addOnSuccessListener {
                 val info = getReturnStatus(newStatus)
                 snackMsg = "${info.emoji} Đã cập nhật: ${info.label}"

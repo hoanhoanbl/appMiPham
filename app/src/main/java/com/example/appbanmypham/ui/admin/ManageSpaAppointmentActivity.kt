@@ -34,6 +34,7 @@ import com.example.appbanmypham.model.AppointmentStatus
 import com.example.appbanmypham.model.SPA_APPOINTMENT_STATUSES
 import com.example.appbanmypham.model.SpaAppointment
 import com.example.appbanmypham.model.appointmentStatusMeta
+import com.example.appbanmypham.model.customerConsultationThreadId
 import com.example.appbanmypham.model.firestoreDocToSpaAppointment
 import com.example.appbanmypham.model.releaseSpaCapacityForAppointment
 import com.example.appbanmypham.ui.theme.AppBanMyPhamTheme
@@ -145,9 +146,18 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                 modifier = Modifier.fillMaxSize().offset(y = (-20).dp).clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)).background(BackgroundPrimary)
             ) {
                 Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AdminMetricCard(Modifier.weight(1f), appointments.size.toString(), "T\u1ED5ng l\u1ECBch", Icons.Default.EventAvailable, MintGreen)
+                    AdminMetricCard(Modifier.weight(1f), appointments.count { it.status == AppointmentStatus.PENDING }.toString(), "Ch\u1EDD nh\u1EADn", Icons.Default.Person, Color(0xFFE8A44A))
+                    AdminMetricCard(Modifier.weight(1f), appointments.count { it.status in AppointmentStatus.activeStatuses }.toString(), "\u0110ang x\u1EED l\u00FD", Icons.Default.Spa, Color(0xFF4A90D9))
+                }
+                Spacer(Modifier.height(12.dp))
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
-                        FilterChip("Tat ca", appointments.size, filterStatus == null, MintGreen) { filterStatus = null }
+                        FilterChip("T\u1EA5t c\u1EA3", appointments.size, filterStatus == null, MintGreen) { filterStatus = null }
                     }
                     items(SPA_APPOINTMENT_STATUSES) { status ->
                         FilterChip(status.label, appointments.count { it.status == status.key }, filterStatus == status.key, statusColor(status.key)) {
@@ -159,7 +169,7 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(AppointmentDateQuickFilter.values()) { option ->
                         FilterChip(
-                            option.label,
+                            appointmentDateFilterLabel(option),
                             appointments.count { matchesDateFilter(it.startAt, option) },
                             dateFilter == option,
                             MintGreen
@@ -337,23 +347,42 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                         )
                         db.collection("appointments").document(appointment.id).update(updates)
                             .addOnSuccessListener {
-                                db.collection("consultation_chat_threads").document(appointment.id).set(
-                                    mapOf(
-                                        "appointmentId" to appointment.id,
-                                        "userId" to appointment.userId,
-                                        "userEmail" to appointment.userEmail,
-                                        "userName" to appointment.userName,
-                                        "consultantId" to newConsultantId.trim(),
-                                        "consultantEmail" to newConsultantEmail.trim(),
-                                        "consultantName" to newConsultantName.trim(),
-                                        "status" to "active",
-                                        "updatedAt" to now
-                                    ),
-                                    SetOptions.merge()
+                                val threadBase = mapOf(
+                                    "appointmentId" to appointment.id,
+                                    "userId" to appointment.userId,
+                                    "userEmail" to appointment.userEmail,
+                                    "userName" to appointment.userName,
+                                    "consultantId" to newConsultantId.trim(),
+                                    "consultantEmail" to newConsultantEmail.trim(),
+                                    "consultantName" to newConsultantName.trim(),
+                                    "status" to "active",
+                                    "updatedAt" to now
                                 )
-                                snackMsg = "Đã cập nhật người phụ trách"
+                                val customerThreadId = appointment.userId.takeIf { it.isNotBlank() }?.let { customerConsultationThreadId(it) } ?: appointment.id
+                                db.collection("consultation_chat_threads").document(customerThreadId).set(threadBase, SetOptions.merge())
+                                db.collection("treatment_plans")
+                                    .whereEqualTo("appointmentId", appointment.id)
+                                    .get()
+                                    .addOnSuccessListener { planSnap ->
+                                        planSnap.documents.forEach { planDoc ->
+                                            val planUpdates = mapOf(
+                                                "consultantId" to newConsultantId.trim(),
+                                                "consultantEmail" to newConsultantEmail.trim(),
+                                                "consultantName" to newConsultantName.trim(),
+                                                "updatedAt" to now
+                                            )
+                                            planDoc.reference.update(planUpdates)
+                                            val threadId = customerThreadId
+                                            planDoc.reference.update(planUpdates + mapOf("chatThreadId" to threadId))
+                                            db.collection("consultation_chat_threads").document(threadId).set(
+                                                threadBase + mapOf("treatmentPlanId" to planDoc.id),
+                                                SetOptions.merge()
+                                            )
+                                        }
+                                    }
+                                snackMsg = "\u0110\u00E3 c\u1EADp nh\u1EADt ng\u01B0\u1EDDi ph\u1EE5 tr\u00E1ch"
                             }
-                            .addOnFailureListener { snackMsg = "Cập nhật người phụ trách thất bại" }
+                            .addOnFailureListener { snackMsg = "C\u1EADp nh\u1EADt ng\u01B0\u1EDDi ph\u1EE5 tr\u00E1ch th\u1EA5t b\u1EA1i" }
                         reassignTarget = null
                     },
                     enabled = newConsultantId.isNotBlank(),
@@ -374,6 +403,38 @@ private fun FilterChip(label: String, count: Int, selected: Boolean, color: Colo
     ) {
         Text("$label ($count)", color = if (selected) Color.White else color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
+}
+
+@Composable
+private fun AdminMetricCard(
+    modifier: Modifier,
+    value: String,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(1.dp)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(0.14f)), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(17.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(value, color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = Color(0xFF6C8F87), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+private fun appointmentDateFilterLabel(filter: AppointmentDateQuickFilter): String = when (filter) {
+    AppointmentDateQuickFilter.ALL -> "T\u1EA5t c\u1EA3 ng\u00E0y"
+    AppointmentDateQuickFilter.TODAY -> "H\u00F4m nay"
+    AppointmentDateQuickFilter.UPCOMING -> "S\u1EAFp t\u1EDBi"
+    AppointmentDateQuickFilter.PAST -> "\u0110\u00E3 qua"
 }
 
 @Composable

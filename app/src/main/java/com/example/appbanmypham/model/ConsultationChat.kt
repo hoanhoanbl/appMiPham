@@ -24,6 +24,8 @@ object ChatThreadStatus {
     const val CLOSED = "closed"
 }
 
+fun customerConsultationThreadId(userId: String): String = "customer_$userId"
+
 data class ConsultationChatMessage(
     val id: String = "",
     val threadId: String = "",

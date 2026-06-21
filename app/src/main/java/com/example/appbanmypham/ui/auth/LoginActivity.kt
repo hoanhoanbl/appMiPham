@@ -126,7 +126,7 @@ fun LoginScreen(
 
     fun doLogin() {
         if (email.isBlank() || password.isBlank()) {
-            errorMsg = "Vui lòng điền đầy đủ thông tin"
+            errorMsg = "Vui l\u00F2ng nh\u1EADp email v\u00E0 m\u1EADt kh\u1EA9u"
             return
         }
         isLoading = true
@@ -143,7 +143,7 @@ fun LoginScreen(
                     }
 
                     val uid = result.user?.uid
-                        ?: throw Exception("Không lấy được thông tin tài khoản")
+                        ?: throw Exception("Kh\u00F4ng l\u1EA5y \u0111\u01B0\u1EE3c th\u00F4ng tin t\u00E0i kho\u1EA3n")
 
                     // Bước 2: Đọc role từ Firestore, timeout riêng 5 giây
                     val role = try {
@@ -165,16 +165,16 @@ fun LoginScreen(
 
             } catch (e: TimeoutCancellationException) {
                 isLoading = false
-                errorMsg = "Kết nối quá chậm, vui lòng thử lại"
+                errorMsg = "K\u1EBFt n\u1ED1i qu\u00E1 ch\u1EADm, vui l\u00F2ng th\u1EED l\u1EA1i"
             } catch (e: Exception) {
                 isLoading = false
                 errorMsg = when {
-                    e.message?.contains("INVALID_LOGIN_CREDENTIALS", ignoreCase = true) == true -> "Email hoặc mật khẩu không đúng"
-                    e.message?.contains("no user record",            ignoreCase = true) == true -> "Tài khoản không tồn tại"
-                    e.message?.contains("badly formatted",           ignoreCase = true) == true -> "Email không hợp lệ"
-                    e.message?.contains("network",                   ignoreCase = true) == true -> "Lỗi kết nối mạng"
-                    e.message?.contains("NETWORK_ERROR",             ignoreCase = true) == true -> "Lỗi kết nối mạng"
-                    else -> "Đăng nhập thất bại: ${e.message}"
+                    e.message?.contains("INVALID_LOGIN_CREDENTIALS", ignoreCase = true) == true -> "Email ho\u1EB7c m\u1EADt kh\u1EA9u kh\u00F4ng \u0111\u00FAng"
+                    e.message?.contains("no user record",            ignoreCase = true) == true -> "T\u00E0i kho\u1EA3n kh\u00F4ng t\u1ED3n t\u1EA1i"
+                    e.message?.contains("badly formatted",           ignoreCase = true) == true -> "Email kh\u00F4ng h\u1EE3p l\u1EC7"
+                    e.message?.contains("network",                   ignoreCase = true) == true -> "L\u1ED7i k\u1EBFt n\u1ED1i m\u1EA1ng"
+                    e.message?.contains("NETWORK_ERROR",             ignoreCase = true) == true -> "L\u1ED7i k\u1EBFt n\u1ED1i m\u1EA1ng"
+                    else -> "\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i: ${e.message}"
                 }
             }
         }
@@ -206,7 +206,7 @@ fun LoginScreen(
             ) {
                 Icon(
                     Icons.Default.Home,
-                    contentDescription = "Về trang chủ",
+                    contentDescription = "V\u1EC1 trang ch\u1EE7",
                     tint     = Color.White,
                     modifier = Modifier.size(20.dp)
                 )
@@ -224,24 +224,24 @@ fun LoginScreen(
                             .clip(RoundedCornerShape(10.dp))
                             .background(Color.White.copy(alpha = 0.3f)),
                         contentAlignment = Alignment.Center
-                    ) { Text("🌿", fontSize = 16.sp) }
+                    ) { Text("L", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "LUMIÈRE",
+                        "LUMIERE SPA",
                         color = Color.White, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp
                     )
                 }
                 Spacer(modifier = Modifier.height(14.dp))
-                Text("Chào mừng", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text("Ch\u00E0o m\u1EEBng", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "trở lại!",
+                    "tr\u1EDF l\u1EA1i!",
                     color = Color.White.copy(alpha = 0.75f),
                     fontSize = 26.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    "Đăng nhập để khám phá bộ sưu tập mới nhất",
+                    "\u0110\u0103ng nh\u1EADp \u0111\u1EC3 ti\u1EBFp t\u1EE5c mua s\u1EAFm ho\u1EB7c qu\u1EA3n l\u00FD spa",
                     color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp
                 )
             }
@@ -257,7 +257,7 @@ fun LoginScreen(
                 .padding(horizontal = 28.dp, vertical = 28.dp)
         ) {
             Text(
-                "ĐĂNG NHẬP TÀI KHOẢN",
+                "\u0110\u0102NG NH\u1EACP T\u00C0I KHO\u1EA2N",
                 color = MintGreen, fontSize = 11.sp,
                 fontWeight = FontWeight.Medium, letterSpacing = 2.sp
             )
@@ -277,12 +277,12 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            LoginFieldLabel("Mật khẩu")
+            LoginFieldLabel("M\u1EADt kh\u1EA9u")
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it; errorMsg = "" },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Mật khẩu", color = Color(0xFFAAD8CE)) },
+                placeholder = { Text("M\u1EADt kh\u1EA9u", color = Color(0xFFAAD8CE)) },
                 shape = RoundedCornerShape(14.dp),
                 singleLine = true,
                 enabled = !isLoading,
@@ -301,7 +301,7 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                "Quên mật khẩu?",
+                "Qu\u00EAn m\u1EADt kh\u1EA9u?",
                 fontSize = 12.sp, color = MintGreen, fontWeight = FontWeight.Medium,
                 modifier = Modifier.align(Alignment.End).clickable(enabled = !isLoading) { }
             )
@@ -337,14 +337,14 @@ fun LoginScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            "Đang đăng nhập...",
+                            "\u0110ang \u0111\u0103ng nh\u1EADp...",
                             color = Color.White, fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
                 } else {
                     Text(
-                        "Đăng nhập",
+                        "\u0110\u0103ng nh\u1EADp",
                         color = Color.White, fontSize = 15.sp,
                         fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp
                     )
@@ -365,16 +365,16 @@ fun LoginScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Home, null, tint = MintGreen, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Tiếp tục không đăng nhập", color = MintGreen, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("Ti\u1EBFp t\u1EE5c kh\u00F4ng \u0111\u0103ng nh\u1EADp", color = MintGreen, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                Text("Chưa có tài khoản? ", fontSize = 12.sp, color = Color(0xFF8ACABA))
+                Text("Ch\u01B0a c\u00F3 t\u00E0i kho\u1EA3n? ", fontSize = 12.sp, color = Color(0xFF8ACABA))
                 Text(
-                    "Đăng ký ngay",
+                    "\u0110\u0103ng k\u00FD ngay",
                     fontSize = 12.sp, color = MintGreen, fontWeight = FontWeight.Medium,
                     modifier = Modifier.clickable(enabled = !isLoading) { onGoRegister() }
                 )

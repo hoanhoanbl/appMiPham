@@ -53,6 +53,7 @@ import com.example.appbanmypham.model.appointmentTimeRange
 import com.example.appbanmypham.model.buildSpaSlotAvailability
 import com.example.appbanmypham.model.capacityBlockKeys
 import com.example.appbanmypham.model.capacityBlockStartTimes
+import com.example.appbanmypham.model.customerConsultationThreadId
 import com.example.appbanmypham.model.firestoreDocToSpaPackage
 import com.example.appbanmypham.model.loadSpaCapacitySnapshot
 import com.example.appbanmypham.model.nextBookingDateOptions
@@ -615,7 +616,7 @@ private suspend fun createSpaAppointmentWithCapacity(
                 photoGuide = spa.photoGuide,
                 status = TreatmentPlanStatus.WAITING_CONSULTANT,
                 consultationNote = note,
-                chatThreadId = planRef.id,
+                chatThreadId = customerConsultationThreadId(userId),
                 createdAt = now,
                 updatedAt = now
             )
@@ -761,7 +762,7 @@ private suspend fun createSpaAppointment(
             photoGuide = spa.photoGuide,
             status = TreatmentPlanStatus.WAITING_CONSULTANT,
             consultationNote = note,
-            chatThreadId = appointmentRef.id,
+            chatThreadId = customerConsultationThreadId(userId),
             createdAt = now,
             updatedAt = now
         )

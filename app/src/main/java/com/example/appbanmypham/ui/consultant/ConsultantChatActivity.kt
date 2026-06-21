@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.appbanmypham.model.ChatSenderRole
@@ -88,7 +89,8 @@ fun ConsultantChatScreen(threadId: String, onBack: () -> Unit = {}) {
     }
 
     val currentThread = thread
-    val canMessage = user != null && currentThread?.consultantId == user.uid
+    val canMessage = user != null && currentThread != null &&
+            (currentThread.consultantId.isBlank() || currentThread.consultantId == user.uid)
 
     DisposableEffect(threadId, currentThread?.consultantId, user?.uid) {
         if (threadId.isBlank() || !canMessage) {
@@ -125,8 +127,8 @@ fun ConsultantChatScreen(threadId: String, onBack: () -> Unit = {}) {
                 isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = MintGreen)
                 }
-                currentThread == null -> EmptyChat("Khong tim thay cuoc chat.")
-                !canMessage -> EmptyChat("Ban khong phu trach cuoc chat nay.")
+                currentThread == null -> EmptyChat("Kh\u00F4ng t\u00ECm th\u1EA5y cu\u1ED9c tr\u00F2 chuy\u1EC7n.")
+                !canMessage -> EmptyChat("B\u1EA1n kh\u00F4ng ph\u1EE5 tr\u00E1ch cu\u1ED9c tr\u00F2 chuy\u1EC7n n\u00E0y.")
                 else -> Column(modifier = Modifier.fillMaxSize()) {
                     LazyColumn(
                         modifier = Modifier.weight(1f),
@@ -134,7 +136,7 @@ fun ConsultantChatScreen(threadId: String, onBack: () -> Unit = {}) {
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (messages.isEmpty()) {
-                            item { EmptyChat("Chua co tin nhan nao.") }
+                            item { EmptyChat("Ch\u01B0a c\u00F3 tin nh\u1EAFn n\u00E0o.") }
                         } else {
                             items(messages, key = { it.id }) { message ->
                                 MessageBubble(message = message, mine = message.senderId == user?.uid)
@@ -151,7 +153,7 @@ fun ConsultantChatScreen(threadId: String, onBack: () -> Unit = {}) {
                                 onValueChange = { messageText = it },
                                 modifier = Modifier.weight(1f),
                                 enabled = canMessage && !isSending,
-                                placeholder = { Text(if (canMessage) "Nhap tin nhan..." else "Chi tu van vien phu trach moi duoc chat") },
+                                placeholder = { Text(if (canMessage) "Nh\u1EADp tin nh\u1EAFn..." else "Ch\u1EC9 t\u01B0 v\u1EA5n vi\u00EAn ph\u1EE5 tr\u00E1ch m\u1EDBi \u0111\u01B0\u1EE3c chat") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(14.dp),
                                 colors = chatFieldColors()
@@ -170,12 +172,12 @@ fun ConsultantChatScreen(threadId: String, onBack: () -> Unit = {}) {
                                                 db = db,
                                                 thread = ownedThread,
                                                 senderId = signedUser.uid,
-                                                senderName = signedUser.displayName ?: signedUser.email?.substringBefore("@") ?: "Consultant",
+                                                senderName = signedUser.displayName ?: signedUser.email?.substringBefore("@") ?: "T\u01B0 v\u1EA5n vi\u00EAn",
                                                 message = text
                                             )
                                         }
                                         if (result.isSuccess) messageText = ""
-                                        snackbarHostState.showSnackbar(if (result.isSuccess) "Da gui" else result.exceptionOrNull()?.message ?: "Gui tin that bai")
+                                        snackbarHostState.showSnackbar(if (result.isSuccess) "\u0110\u00E3 g\u1EEDi" else result.exceptionOrNull()?.message ?: "G\u1EEDi tin th\u1EA5t b\u1EA1i")
                                         isSending = false
                                     }
                                 },
@@ -199,22 +201,41 @@ private fun ChatHeader(
     onOpenProfile: () -> Unit
 ) {
     Box(
-        modifier = Modifier.fillMaxWidth().background(brush = AppGradients.mintHorizontal).statusBarsPadding().padding(horizontal = 14.dp, vertical = 12.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(brush = AppGradients.mintHorizontal)
+            .statusBarsPadding()
+            .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart).size(38.dp).clip(CircleShape).background(Color.White.copy(0.23f))) {
             Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.White)
         }
         Row(
-            modifier = Modifier.align(Alignment.Center).clickable(enabled = thread != null) { onOpenProfile() },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 46.dp)
+                .clickable(enabled = thread != null) { onOpenProfile() },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(Modifier.size(42.dp).clip(CircleShape).background(Color.White.copy(0.25f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(0.25f)), contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.Person, contentDescription = null, tint = Color.White)
             }
             Spacer(Modifier.width(10.dp))
-            Column {
-                Text(thread?.userName?.ifBlank { thread.userEmail } ?: "Khach hang", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                Text("Cham ten de xem ho so", color = Color.White.copy(0.76f), fontSize = 11.sp)
+            Column(Modifier.weight(1f)) {
+                Text(
+                    thread?.userName?.ifBlank { thread.userEmail } ?: "Kh\u00E1ch h\u00E0ng",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val context = when {
+                    thread?.treatmentPlanId?.isNotBlank() == true -> "H\u1ED3 s\u01A1 li\u1EC7u tr\u00ECnh"
+                    thread?.appointmentId?.isNotBlank() == true -> "H\u1ED3 s\u01A1 l\u1ECBch h\u1EB9n"
+                    else -> "Ch\u1EA1m \u0111\u1EC3 xem h\u1ED3 s\u01A1"
+                }
+                Text(context, color = Color.White.copy(0.76f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -224,9 +245,14 @@ private fun ChatHeader(
 private fun MessageBubble(message: ConsultationChatMessage, mine: Boolean) {
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
         Column(
-            modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).background(if (mine) Color(0xFFEAF9F5) else Color.White).padding(horizontal = 12.dp, vertical = 9.dp)
+            modifier = Modifier
+                .widthIn(max = 300.dp)
+                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp))
+                .background(if (mine) Color(0xFFEAF9F5) else Color.White)
+                .padding(horizontal = 12.dp, vertical = 9.dp)
         ) {
-            Text(message.senderName.ifBlank { message.senderRole }, color = if (mine) MintGreen else Color(0xFF8ACABA), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(message.senderName.ifBlank { message.senderRole }, color = if (mine) MintGreen else Color(0xFF8ACABA), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(2.dp))
             Text(message.message, color = Color(0xFF1A4A40), fontSize = 14.sp, lineHeight = 19.sp)
         }
     }
@@ -234,11 +260,13 @@ private fun MessageBubble(message: ConsultationChatMessage, mine: Boolean) {
 
 @Composable
 private fun EmptyChat(text: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-            Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(text, color = Color(0xFF8ACABA), fontSize = 14.sp)
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFFEAF9F5)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen, modifier = Modifier.size(32.dp))
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(text, color = Color(0xFF6C8F87), fontSize = 14.sp, lineHeight = 19.sp)
         }
     }
 }
@@ -251,14 +279,17 @@ private suspend fun sendConsultantChatMessage(
     message: String
 ) {
     withContext(Dispatchers.IO) {
-        if (thread.consultantId != senderId) throw IllegalStateException("Ban khong phu trach cuoc chat nay")
+        if (thread.consultantId.isNotBlank() && thread.consultantId != senderId) {
+            throw IllegalStateException("B\u1EA1n kh\u00F4ng ph\u1EE5 tr\u00E1ch cu\u1ED9c tr\u00F2 chuy\u1EC7n n\u00E0y")
+        }
         val now = System.currentTimeMillis()
+        val consultantEmail = FirebaseAuth.getInstance().currentUser?.email.orEmpty()
         val chatMessage = ConsultationChatMessage(
             threadId = thread.id,
             appointmentId = thread.appointmentId,
             treatmentPlanId = thread.treatmentPlanId,
             userId = thread.userId,
-            consultantId = thread.consultantId,
+            consultantId = thread.consultantId.ifBlank { senderId },
             senderId = senderId,
             senderName = senderName,
             senderRole = ChatSenderRole.CONSULTANT,
@@ -266,8 +297,16 @@ private suspend fun sendConsultantChatMessage(
             createdAt = now
         )
         db.collection("consultation_chat_messages").add(chatMessage.toFirestoreMap(includeCreatedAt = true)).await()
-        db.collection("consultation_chat_threads").document(thread.id).update(
-            mapOf("lastMessage" to message, "lastMessageAt" to now, "updatedAt" to now)
+        db.collection("consultation_chat_threads").document(thread.id).set(
+            mapOf(
+                "consultantId" to thread.consultantId.ifBlank { senderId },
+                "consultantEmail" to thread.consultantEmail.ifBlank { consultantEmail },
+                "consultantName" to thread.consultantName.ifBlank { senderName },
+                "lastMessage" to message,
+                "lastMessageAt" to now,
+                "updatedAt" to now
+            ),
+            com.google.firebase.firestore.SetOptions.merge()
         ).await()
     }
 }

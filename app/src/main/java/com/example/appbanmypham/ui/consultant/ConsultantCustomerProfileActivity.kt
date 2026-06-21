@@ -151,7 +151,7 @@ fun ConsultantCustomerProfileScreen(userId: String, threadId: String, onBack: ()
                 }
             } else if (accessDenied) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Ban khong co quyen xem ho so khach nay.", color = Color(0xFF8ACABA), fontSize = 14.sp)
+                    Text("B\u1EA1n kh\u00F4ng c\u00F3 quy\u1EC1n xem h\u1ED3 s\u01A1 kh\u00E1ch n\u00E0y.", color = Color(0xFF8ACABA), fontSize = 14.sp)
                 }
             } else {
                 val noShowCount = appointments.count { it.status == AppointmentStatus.NO_SHOW }
@@ -162,18 +162,18 @@ fun ConsultantCustomerProfileScreen(userId: String, threadId: String, onBack: ()
                 ) {
                     item {
                         SectionCard {
-                            SectionTitle(Icons.Default.Person, "Thong tin khach")
-                            InfoText("Ten", profile.name.ifBlank { "Khach hang" })
+                            SectionTitle(Icons.Default.Person, "Th\u00F4ng tin kh\u00E1ch")
+                            InfoText("T\u00EAn", profile.name.ifBlank { "Kh\u00E1ch h\u00E0ng" })
                             InfoText("Email", profile.email.ifBlank { "-" })
-                            InfoText("SDT", profile.phone.ifBlank { "-" })
-                            InfoText("Khong den", "$noShowCount lan")
+                            InfoText("S\u0110T", profile.phone.ifBlank { "-" })
+                            InfoText("Kh\u00F4ng \u0111\u1EBFn", "$noShowCount l\u1EA7n")
                         }
                     }
                     item {
                         SectionCard {
-                            SectionTitle(Icons.Default.Spa, "Lieu trinh")
+                            SectionTitle(Icons.Default.Spa, "Li\u1EC7u tr\u00ECnh")
                             if (plans.isEmpty()) {
-                                Text("Chua co lieu trinh lien quan.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                                Text("Ch\u01B0a c\u00F3 li\u1EC7u tr\u00ECnh li\u00EAn quan.", color = Color(0xFF8ACABA), fontSize = 13.sp)
                             } else {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     plans.forEach { plan -> PlanRow(plan) }
@@ -183,9 +183,9 @@ fun ConsultantCustomerProfileScreen(userId: String, threadId: String, onBack: ()
                     }
                     item {
                         SectionCard {
-                            SectionTitle(Icons.Default.EventAvailable, "Lich su dat lich")
+                            SectionTitle(Icons.Default.EventAvailable, "L\u1ECBch s\u1EED \u0111\u1EB7t l\u1ECBch")
                             if (appointments.isEmpty()) {
-                                Text("Chua co lich hen.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                                Text("Ch\u01B0a c\u00F3 l\u1ECBch h\u1EB9n.", color = Color(0xFF8ACABA), fontSize = 13.sp)
                             } else {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     appointments.take(12).forEach { AppointmentRow(it) }
@@ -195,11 +195,11 @@ fun ConsultantCustomerProfileScreen(userId: String, threadId: String, onBack: ()
                     }
                     item {
                         SectionCard {
-                            SectionTitle(Icons.Default.PhotoCamera, "Anh tien trinh")
+                            SectionTitle(Icons.Default.PhotoCamera, "\u1EA2nh ti\u1EBFn tr\u00ECnh")
                             if (photos.isEmpty()) {
-                                Text("Chua co anh tien trinh.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                                Text("Ch\u01B0a c\u00F3 \u1EA3nh ti\u1EBFn tr\u00ECnh.", color = Color(0xFF8ACABA), fontSize = 13.sp)
                             } else {
-                                Text("${photos.size} anh da duoc cap nhat trong cac lieu trinh.", color = Color(0xFF4A7A70), fontSize = 13.sp)
+                                Text("${photos.size} \u1EA3nh \u0111\u00E3 \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt trong c\u00E1c li\u1EC7u tr\u00ECnh.", color = Color(0xFF4A7A70), fontSize = 13.sp)
                             }
                         }
                     }
@@ -222,8 +222,8 @@ private fun ProfileHeader(profile: CustomerProfile, onBack: () -> Unit) {
                 Icon(Icons.Default.Person, contentDescription = null, tint = Color.White)
             }
             Spacer(Modifier.height(6.dp))
-            Text(profile.name.ifBlank { profile.email.ifBlank { "Khach hang" } }, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("Ho so va lich su dat spa", color = Color.White.copy(0.78f), fontSize = 11.sp)
+            Text(profile.name.ifBlank { profile.email.ifBlank { "Kh\u00E1ch h\u00E0ng" } }, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("H\u1ED3 s\u01A1 v\u00E0 l\u1ECBch s\u1EED \u0111\u1EB7t spa", color = Color.White.copy(0.78f), fontSize = 11.sp)
         }
     }
 }
@@ -261,7 +261,7 @@ private fun PlanRow(plan: TreatmentPlan) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFFF8FFFE)).padding(12.dp)) {
         Text(plan.packageName, color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp)
         Spacer(Modifier.height(3.dp))
-        Text("${plan.completedSessionCount}/${plan.sessionCount} buoi - ${treatmentPlanStatusMeta(plan.status).label}", color = Color(0xFF5A8A80), fontSize = 12.sp)
+        Text("${plan.completedSessionCount}/${plan.sessionCount} bu\u1ED5i - ${treatmentPlanStatusMeta(plan.status).label}", color = Color(0xFF5A8A80), fontSize = 12.sp)
     }
 }
 

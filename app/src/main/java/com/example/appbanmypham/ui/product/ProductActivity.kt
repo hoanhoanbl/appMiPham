@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,8 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,7 +44,6 @@ import com.example.appbanmypham.model.SpaPackage
 import com.example.appbanmypham.model.TreatmentPlanStatus
 import com.example.appbanmypham.model.TreatmentSessionStatus
 import com.example.appbanmypham.model.activeTreatmentPlanKey
-import com.example.appbanmypham.model.appointmentStatusMeta
 import com.example.appbanmypham.model.firestoreDocToSpaAppointment
 import com.example.appbanmypham.model.firestoreDocToSpaPackage
 import com.example.appbanmypham.ui.auth.LoginActivity
@@ -72,11 +74,8 @@ class ProductActivity : ComponentActivity() {
                         onGoTreatmentPlans = {
                             startActivity(Intent(this, CustomerTreatmentPlanActivity::class.java))
                         },
-                        onGoAppointmentChat = { appointment ->
-                            startActivity(
-                                Intent(this, CustomerAppointmentChatActivity::class.java)
-                                    .putExtra("appointment_id", appointment.id)
-                            )
+                        onGoConsultantChat = {
+                            startActivity(Intent(this, CustomerAppointmentChatActivity::class.java))
                         },
                         onGoDetail = { product ->
                             val intent = Intent(this, ProductDetailsActivity::class.java)
@@ -99,7 +98,7 @@ fun ProductScreen(
     onGoLogin  : () -> Unit = {},
     onGoSpaDetail: (SpaPackage) -> Unit = {},
     onGoTreatmentPlans: () -> Unit = {},
-    onGoAppointmentChat: (SpaAppointment) -> Unit = {},
+    onGoConsultantChat: () -> Unit = {},
     onGoDetail : (Product) -> Unit = {}
 ) {
     val db   = remember { FirebaseFirestore.getInstance() }
@@ -310,43 +309,24 @@ fun ProductScreen(
                         .fillMaxWidth()
                         .background(brush = AppGradients.mintHorizontal)
                         .statusBarsPadding()
-                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(15.dp))
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(Color.White.copy(alpha = 0.24f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Spa, contentDescription = "LUMIÈRE", tint = Color.White, modifier = Modifier.size(23.dp))
+                        Icon(Icons.Default.Spa, contentDescription = "LUMIÈRE", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
-                    OutlinedTextField(
+                    HomeSearchField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        placeholder = { Text("Tìm kiếm...", color = Color(0xFF7DB9AD), fontSize = 14.sp) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MintGreen) },
-                        trailingIcon = {
-                            if (searchQuery.isNotBlank()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Xóa tìm kiếm", tint = Color(0xFF7DB9AD))
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.White,
-                            unfocusedBorderColor = Color.White,
-                            focusedContainerColor = Color.White.copy(alpha = 0.96f),
-                            unfocusedContainerColor = Color.White.copy(alpha = 0.96f),
-                            focusedTextColor = Color(0xFF1A4A40),
-                            unfocusedTextColor = Color(0xFF1A4A40),
-                            cursorColor = MintGreen
-                        ),
-                        shape = RoundedCornerShape(17.dp)
+                        onClear = { searchQuery = "" },
+                        modifier = Modifier.weight(1f)
                     )
                     HeaderIconButton(
                         icon = Icons.Default.ShoppingCart,
@@ -422,7 +402,7 @@ fun ProductScreen(
                 onPackageClick = onGoSpaDetail,
                 onGoLogin = onGoLogin,
                 onGoTreatmentPlans = onGoTreatmentPlans,
-                onGoAppointmentChat = onGoAppointmentChat
+                onGoConsultantChat = onGoConsultantChat
             )
 
             BottomTab.ORDERS -> Box(modifier = Modifier.padding(padding)) {
@@ -443,6 +423,51 @@ fun ProductScreen(
 
 // ── Bottom Nav Item ───────────────────────────────────────────────────────────
 @Composable
+private fun HomeSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(42.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(Color.White.copy(alpha = 0.96f))
+            .padding(start = 12.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.Search, contentDescription = null, tint = MintGreen, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(9.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(
+                color = Color(0xFF1A4A40),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            ),
+            cursorBrush = SolidColor(MintGreen),
+            modifier = Modifier.weight(1f),
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isBlank()) {
+                        Text("Tìm kiếm", color = Color(0xFF7DB9AD), fontSize = 13.sp)
+                    }
+                    innerTextField()
+                }
+            }
+        )
+        if (value.isNotBlank()) {
+            IconButton(onClick = onClear, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Xóa tìm kiếm", tint = Color(0xFF7DB9AD), modifier = Modifier.size(17.dp))
+            }
+        }
+    }
+}
+
+@Composable
 private fun HeaderIconButton(
     icon: ImageVector,
     contentDescription: String,
@@ -453,18 +478,18 @@ private fun HeaderIconButton(
         IconButton(
             onClick = onClick,
             modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .size(36.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(Color.White.copy(alpha = 0.22f))
         ) {
-            Icon(icon, contentDescription = contentDescription, tint = Color.White, modifier = Modifier.size(22.dp))
+            Icon(icon, contentDescription = contentDescription, tint = Color.White, modifier = Modifier.size(19.dp))
         }
         if (badgeCount > 0) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .offset(x = 2.dp, y = (-2).dp)
-                    .size(19.dp)
+                    .size(17.dp)
                     .clip(CircleShape)
                     .background(Color(0xFFFF6B6B)),
                 contentAlignment = Alignment.Center
@@ -472,7 +497,7 @@ private fun HeaderIconButton(
                 Text(
                     if (badgeCount > 9) "9+" else badgeCount.toString(),
                     color = Color.White,
-                    fontSize = 9.sp,
+                    fontSize = 8.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -488,13 +513,12 @@ private fun SpaTabContent(
     onPackageClick: (SpaPackage) -> Unit,
     onGoLogin: () -> Unit,
     onGoTreatmentPlans: () -> Unit,
-    onGoAppointmentChat: (SpaAppointment) -> Unit
+    onGoConsultantChat: () -> Unit
 ) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
     val currentUser = auth.currentUser
-    var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Tat ca") }
     var appointments by remember { mutableStateOf(listOf<SpaAppointment>()) }
     var appointmentLoading by remember { mutableStateOf(currentUser != null) }
@@ -523,12 +547,7 @@ private fun SpaTabContent(
     }
     val packageImages = remember(packages) { packages.associate { it.id to it.imageUrl } }
     val filtered = packages.filter { item ->
-        val matchCategory = selectedCategory == "Tat ca" || item.category == selectedCategory
-        val matchSearch = searchQuery.isBlank() ||
-                item.name.contains(searchQuery, ignoreCase = true) ||
-                item.category.contains(searchQuery, ignoreCase = true) ||
-                item.shortDescription.contains(searchQuery, ignoreCase = true)
-        matchCategory && matchSearch
+        selectedCategory == "Tat ca" || item.category == selectedCategory
     }
 
     Column(
@@ -541,49 +560,32 @@ private fun SpaTabContent(
                 .fillMaxWidth()
                 .background(brush = AppGradients.mintHorizontal)
                 .statusBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .padding(horizontal = 18.dp, vertical = 12.dp)
         ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.25f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Spa, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("LUMIÈRE SPA", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                        Text("Chăm sóc da và thư giãn", color = Color.White.copy(0.78f), fontSize = 11.sp)
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(alpha = 0.25f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Spa, contentDescription = null, tint = Color.White, modifier = Modifier.size(21.dp))
                 }
-                Spacer(Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Tìm gói spa...", color = Color.White.copy(0.75f)) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White) },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = null, tint = Color.White)
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(14.dp),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.White,
-                        unfocusedBorderColor = Color.White.copy(0.5f),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = Color.White
-                    )
-                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("LUMIÈRE SPA", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                    Text("Chăm sóc da và thư giãn", color = Color.White.copy(0.78f), fontSize = 11.sp)
+                }
+                IconButton(
+                    onClick = { if (currentUser != null) onGoConsultantChat() else onGoLogin() },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White.copy(alpha = 0.24f))
+                ) {
+                    Icon(Icons.Default.Chat, contentDescription = "Chat với tư vấn viên", tint = Color.White, modifier = Modifier.size(21.dp))
+                }
             }
         }
 
@@ -647,7 +649,6 @@ private fun SpaTabContent(
                         appointments = appointments,
                         packageImages = packageImages,
                         onGoLogin = onGoLogin,
-                        onOpenChat = onGoAppointmentChat,
                         onCancel = { appointment ->
                             val uid = currentUser?.uid ?: return@SpaAppointmentHistorySection
                             if (appointment.userId == uid && appointment.status == AppointmentStatus.PENDING) {
@@ -774,7 +775,7 @@ private fun TreatmentPlanEntry(
             Column(modifier = Modifier.weight(1f)) {
                 Text("Liệu trình của tôi", color = Color(0xFF1A4A40), fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    if (isLoggedIn) "Xem tiến độ, ảnh điều trị và chat với tư vấn viên" else "Đăng nhập để xem liệu trình spa",
+                    if (isLoggedIn) "Xem tiến độ và ảnh điều trị" else "Đăng nhập để xem liệu trình spa",
                     color = Color(0xFF8ACABA),
                     fontSize = 12.sp
                 )
@@ -791,7 +792,6 @@ private fun SpaAppointmentHistorySection(
     appointments: List<SpaAppointment>,
     packageImages: Map<String, String>,
     onGoLogin: () -> Unit,
-    onOpenChat: (SpaAppointment) -> Unit,
     onCancel: (SpaAppointment) -> Unit
 ) {
     Card(
@@ -833,7 +833,6 @@ private fun SpaAppointmentHistorySection(
                         CustomerAppointmentCard(
                             appointment = appointment,
                             imageUrl = packageImages[appointment.spaPackageId].orEmpty(),
-                            onOpenChat = { onOpenChat(appointment) },
                             onCancel = { onCancel(appointment) }
                         )
                     }
@@ -844,8 +843,7 @@ private fun SpaAppointmentHistorySection(
 }
 
 @Composable
-private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: String, onOpenChat: () -> Unit, onCancel: () -> Unit) {
-    val meta = appointmentStatusMeta(appointment.status)
+private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: String, onCancel: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -866,24 +864,9 @@ private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: Strin
         }
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(appointment.spaPackageName, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(3.dp))
-                    Text("${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}", color = Color(0xFF5A8A80), fontSize = 12.sp)
-                    if (appointment.consultantName.isNotBlank() || appointment.consultantEmail.isNotBlank()) {
-                        Text("Tư vấn: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}", color = MintGreen, fontSize = 12.sp)
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(statusBg(appointment.status))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(meta.label, color = statusColor(appointment.status), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                }
-            }
+            Text(appointment.spaPackageName, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text("${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}", color = Color(0xFF5A8A80), fontSize = 12.sp)
             if (appointment.status == AppointmentStatus.PENDING) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onCancel, contentPadding = PaddingValues(0.dp)) {
@@ -891,42 +874,9 @@ private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: Strin
                     Spacer(Modifier.width(4.dp))
                     Text("Hủy lịch", color = Color(0xFFE57373), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
-            } else if (appointment.consultantId.isNotBlank() && appointment.status in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_SERVICE, AppointmentStatus.RESCHEDULED, AppointmentStatus.NO_SHOW)) {
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onOpenChat, contentPadding = PaddingValues(0.dp)) {
-                    Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Chat tư vấn", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                }
             }
         }
     }
-}
-
-private fun statusColor(status: String): Color = when (status) {
-    AppointmentStatus.PENDING -> Color(0xFFE8A44A)
-    AppointmentStatus.ASSIGNED -> Color(0xFF7B61D1)
-    AppointmentStatus.CONFIRMED -> Color(0xFF4A90D9)
-    AppointmentStatus.CHECKED_IN -> Color(0xFF2E8A7A)
-    AppointmentStatus.IN_SERVICE -> Color(0xFF009688)
-    AppointmentStatus.COMPLETED -> MintGreen
-    AppointmentStatus.CANCELLED -> Color(0xFFE57373)
-    AppointmentStatus.NO_SHOW -> Color(0xFFE8A44A)
-    AppointmentStatus.RESCHEDULED -> Color(0xFF4A90D9)
-    else -> Color(0xFF8ACABA)
-}
-
-private fun statusBg(status: String): Color = when (status) {
-    AppointmentStatus.PENDING -> Color(0xFFFFF3E0)
-    AppointmentStatus.ASSIGNED -> Color(0xFFF0ECFF)
-    AppointmentStatus.CONFIRMED -> Color(0xFFE8F0FB)
-    AppointmentStatus.CHECKED_IN -> Color(0xFFEAF9F5)
-    AppointmentStatus.IN_SERVICE -> Color(0xFFE0F2F1)
-    AppointmentStatus.COMPLETED -> Color(0xFFEAF9F5)
-    AppointmentStatus.CANCELLED -> Color(0xFFFFECEC)
-    AppointmentStatus.NO_SHOW -> Color(0xFFFFF3E0)
-    AppointmentStatus.RESCHEDULED -> Color(0xFFE8F0FB)
-    else -> Color(0xFFF5F5F5)
 }
 
 @Composable
@@ -1099,8 +1049,8 @@ private fun HomeTabContent(
         }
         else -> LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            contentPadding = PaddingValues(top = 14.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             if (categoryItems.isNotEmpty()) {
                 item {
@@ -1435,7 +1385,7 @@ private fun HomeSectionHeader(
     onActionClick: (() -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1443,12 +1393,12 @@ private fun HomeSectionHeader(
             Box(
                 modifier = Modifier
                     .width(4.dp)
-                    .height(24.dp)
+                    .height(22.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(MintGreen)
             )
-            Spacer(Modifier.width(9.dp))
-            Text(title, color = Color(0xFF0F4D42), fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(8.dp))
+            Text(title, color = Color(0xFF0F4D42), fontSize = 19.sp, fontWeight = FontWeight.Bold)
         }
         if (actionText != null) {
             TextButton(onClick = { onActionClick?.invoke() }, contentPadding = PaddingValues(horizontal = 6.dp)) {
@@ -1468,12 +1418,12 @@ private fun CategoryTile(
 ) {
     Card(
         modifier = Modifier
-            .width(148.dp)
-            .height(172.dp)
+            .width(126.dp)
+            .height(140.dp)
             .clickable { onClick() },
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(3.dp),
+        elevation = CardDefaults.cardElevation(2.dp),
         border = androidx.compose.foundation.BorderStroke(
             width = 0.9.dp,
             color = Color(0xFFDDF4EE)
@@ -1491,13 +1441,13 @@ private fun CategoryTile(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                    .padding(horizontal = 9.dp, vertical = 9.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
                     modifier = Modifier
-                        .size(86.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .size(80.dp)
+                        .clip(RoundedCornerShape(15.dp))
                         .background(Color(0xFFF4FBF9)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1505,47 +1455,39 @@ private fun CategoryTile(
                         AsyncImage(
                             model = product?.imageUrl,
                             contentDescription = title,
-                            modifier = Modifier.fillMaxSize().padding(10.dp),
+                            modifier = Modifier.fillMaxSize().padding(6.dp),
                             contentScale = ContentScale.Fit
                         )
                     } else {
                         Icon(Icons.Default.Category, contentDescription = null, tint = MintGreen, modifier = Modifier.size(34.dp))
                     }
                 }
-                Spacer(Modifier.height(13.dp))
+                Spacer(Modifier.height(7.dp))
                 Text(
                     title,
                     color = Color(0xFF0F4D42),
-                    fontSize = 14.sp,
-                    lineHeight = 18.sp,
+                    fontSize = 13.sp,
+                    lineHeight = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
-                Spacer(Modifier.height(7.dp))
+                Spacer(Modifier.height(5.dp))
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
                         .background(Color(0xFFEAF9F5))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
                         "$productCount sản phẩm",
                         color = MintGreen,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1
                     )
                 }
-                Spacer(Modifier.height(5.dp))
-                Box(
-                    modifier = Modifier
-                        .width(28.dp)
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MintGreen.copy(alpha = 0.82f))
-                )
             }
         }
     }
@@ -1557,14 +1499,15 @@ private fun FeaturedSpaCard(
     onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.width(214.dp).height(188.dp).clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.width(206.dp).height(210.dp).clickable { onClick() },
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(3.dp)
+        elevation = CardDefaults.cardElevation(3.dp),
+        border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFFEAF9F5))
     ) {
         Column {
             Box(
-                modifier = Modifier.fillMaxWidth().height(104.dp).background(Color(0xFFEAF9F5)),
+                modifier = Modifier.fillMaxWidth().height(112.dp).background(Color(0xFFEAF9F5)),
                 contentAlignment = Alignment.Center
             ) {
                 if (spaPackage.imageUrl.isNotBlank()) {
@@ -1586,10 +1529,10 @@ private fun FeaturedSpaCard(
                     }
                 }
             }
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(spaPackage.name, color = Color(0xFF1A4A40), fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(spaPackage.name, color = Color(0xFF1A4A40), fontSize = 14.sp, lineHeight = 17.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(spaPackage.category.ifBlank { "Chăm sóc spa" }, color = Color(0xFF8ACABA), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${"%,.0f".format(spaPackage.price)}đ", color = Color(0xFFFF7A1A), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("${"%,.0f".format(spaPackage.price)}đ", color = Color(0xFFFF7A1A), fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
     }
@@ -1606,17 +1549,17 @@ private fun FeaturedProductCard(
     }
     val isOutOfStock = product.stock == 0
     Card(
-        modifier = Modifier.width(168.dp).height(238.dp).clickable { onClick() },
+        modifier = Modifier.width(158.dp).height(226.dp).clickable { onClick() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(4.dp),
+        elevation = CardDefaults.cardElevation(3.dp),
         border = androidx.compose.foundation.BorderStroke(0.8.dp, Color(0xFFEAF9F5))
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(132.dp)
+                    .height(122.dp)
                     .padding(10.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFFF4FBF9)),
@@ -1650,20 +1593,20 @@ private fun FeaturedProductCard(
                     }
                 }
             }
-            Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(product.name, color = Color(0xFF1A4A40), fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(product.name, color = Color(0xFF1A4A40), fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(product.brandName.ifBlank { product.category }, color = Color(0xFF7DB9AD), fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("${"%,.0f".format(product.price)}đ", color = Color(0xFFFF7A1A), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("${"%,.0f".format(product.price)}đ", color = Color(0xFFFF7A1A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         if (product.stock > 0) Text("Còn ${product.stock}", color = Color(0xFFAAD8CE), fontSize = 10.sp)
                     }
                     if (!isOutOfStock) {
                         IconButton(
                             onClick = onAddToCart,
-                            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(12.dp)).background(MintGreen)
+                            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(12.dp)).background(MintGreen)
                         ) {
-                            Icon(Icons.Default.AddShoppingCart, contentDescription = "Thêm vào giỏ", tint = Color.White, modifier = Modifier.size(17.dp))
+                            Icon(Icons.Default.AddShoppingCart, contentDescription = "Thêm vào giỏ", tint = Color.White, modifier = Modifier.size(16.dp))
                         }
                     }
                 }

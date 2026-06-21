@@ -16,10 +16,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.EventAvailable
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,9 +31,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.example.appbanmypham.model.ChatSenderRole
-import com.example.appbanmypham.model.ConsultationChatMessage
-import com.example.appbanmypham.model.ConsultationChatThread
 import com.example.appbanmypham.model.AppointmentStatus
 import com.example.appbanmypham.model.BookingDateOption
 import com.example.appbanmypham.model.FirestoreTransactionUpdate
@@ -51,8 +46,6 @@ import com.example.appbanmypham.model.appointmentTimeRange
 import com.example.appbanmypham.model.buildSpaSlotAvailability
 import com.example.appbanmypham.model.capacityBlockKeys
 import com.example.appbanmypham.model.capacityBlockStartTimes
-import com.example.appbanmypham.model.firestoreDocToConsultationChatMessage
-import com.example.appbanmypham.model.firestoreDocToConsultationChatThread
 import com.example.appbanmypham.model.firestoreDocToTreatmentPlan
 import com.example.appbanmypham.model.firestoreDocToTreatmentProgressPhoto
 import com.example.appbanmypham.model.firestoreDocToTreatmentSession
@@ -95,8 +88,7 @@ class CustomerTreatmentPlanActivity : ComponentActivity() {
 
 private enum class CustomerTreatmentTab(val label: String) {
     OVERVIEW("Tổng quan"),
-    SESSIONS("Buổi"),
-    CHAT("Chat")
+    SESSIONS("Buổi")
 }
 
 @Composable
@@ -110,18 +102,13 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
     var selectedPlanId by remember { mutableStateOf<String?>(null) }
     var sessions by remember { mutableStateOf(listOf<TreatmentSession>()) }
     var photos by remember { mutableStateOf(listOf<TreatmentProgressPhoto>()) }
-    var thread by remember { mutableStateOf<ConsultationChatThread?>(null) }
-    var messages by remember { mutableStateOf(listOf<ConsultationChatMessage>()) }
-    var messageText by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(user != null) }
-    var isSending by remember { mutableStateOf(false) }
     var capacitySnapshot by remember { mutableStateOf<SpaCapacitySnapshot?>(null) }
     var scheduleTarget by remember { mutableStateOf<TreatmentSession?>(null) }
     var selectedTab by remember { mutableStateOf(CustomerTreatmentTab.OVERVIEW) }
     val dateOptions = remember { nextBookingDateOptions(31) }
 
     val selectedPlan = plans.firstOrNull { it.id == selectedPlanId } ?: plans.firstOrNull()
-    val canAccess = user != null && selectedPlan?.userId == user.uid
 
     DisposableEffect(user?.uid) {
         val uid = user?.uid ?: run {
@@ -168,22 +155,6 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
                     ?.sortedBy { it.createdAt }
                     ?: emptyList()
             }
-        val threadId = plan.chatThreadId.ifBlank { plan.appointmentId }
-        if (threadId.isNotBlank()) {
-            regs += db.collection("consultation_chat_threads").document(threadId)
-                .addSnapshotListener { snap, _ ->
-                    thread = snap?.takeIf { it.exists() }?.let { runCatching { firestoreDocToConsultationChatThread(it) }.getOrNull() }
-                }
-            regs += db.collection("consultation_chat_messages")
-                .whereEqualTo("threadId", threadId)
-                .addSnapshotListener { snap, _ ->
-                    messages = snap?.documents
-                        ?.mapNotNull { runCatching { firestoreDocToConsultationChatMessage(it) }.getOrNull() }
-                        ?.filter { it.userId == signedUser.uid }
-                        ?.sortedBy { it.createdAt }
-                        ?: emptyList()
-                }
-        }
         onDispose { regs.forEach { it.remove() } }
     }
 
@@ -257,51 +228,6 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
                                                     onSchedule = { scheduleTarget = session }
                                                 )
                                             }
-                                        }
-                                    }
-                                }
-                                CustomerTreatmentTab.CHAT -> SectionCard {
-                                    SectionTitle(Icons.Default.Chat, "Chat với tư vấn viên")
-                                    if (!canAccess || thread == null || user == null) {
-                                        Text("Chat sẽ hiển thị khi tư vấn viên đã nhận lịch.", color = Color(0xFF8ACABA), fontSize = 13.sp)
-                                    } else {
-                                        ChatMessages(messages = messages, currentUserId = user.uid)
-                                        Spacer(Modifier.height(10.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            OutlinedTextField(
-                                                value = messageText,
-                                                onValueChange = { messageText = it },
-                                                modifier = Modifier.weight(1f),
-                                                placeholder = { Text("Nhập tin nhắn...", color = Color(0xFFAAD8CE)) },
-                                                singleLine = true,
-                                                colors = fieldColors(),
-                                                shape = RoundedCornerShape(14.dp)
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                            IconButton(
-                                                onClick = {
-                                                    val text = messageText.trim()
-                                                    if (text.isBlank()) return@IconButton
-                                                    scope.launch {
-                                                        isSending = true
-                                                        val result = runCatching {
-                                                            sendCustomerMessage(
-                                                                db = db,
-                                                                plan = plan,
-                                                                threadId = thread!!.id,
-                                                                senderId = user.uid,
-                                                                senderName = user.displayName ?: user.email?.substringBefore("@") ?: "Khách hàng",
-                                                                message = text
-                                                            )
-                                                        }
-                                                        if (result.isSuccess) messageText = ""
-                                                        snackbarHostState.showSnackbar(if (result.isSuccess) "Đã gửi" else "Gửi tin thất bại")
-                                                        isSending = false
-                                                    }
-                                                },
-                                                enabled = messageText.isNotBlank() && !isSending,
-                                                modifier = Modifier.size(46.dp).clip(CircleShape).background(MintGreen)
-                                            ) { Icon(Icons.Default.Send, contentDescription = null, tint = Color.White) }
                                         }
                                     }
                                 }
@@ -788,27 +714,6 @@ private suspend fun scheduleTreatmentSession(
 private const val DAY_MILLIS = 86_400_000L
 
 @Composable
-private fun ChatMessages(messages: List<ConsultationChatMessage>, currentUserId: String) {
-    if (messages.isEmpty()) {
-        Text("Chưa có tin nhắn nào.", color = Color(0xFF8ACABA), fontSize = 13.sp)
-        return
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        messages.takeLast(8).forEach { message ->
-            val mine = message.senderId == currentUserId
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
-                Column(
-                    modifier = Modifier.widthIn(max = 280.dp).clip(RoundedCornerShape(14.dp)).background(if (mine) Color(0xFFEAF9F5) else Color(0xFFF7F7F7)).padding(horizontal = 10.dp, vertical = 8.dp)
-                ) {
-                    Text(message.senderName.ifBlank { message.senderRole }, color = if (mine) MintGreen else Color(0xFF8ACABA), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Text(message.message, color = Color(0xFF1A4A40), fontSize = 13.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun EmptyState(text: String, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
@@ -816,35 +721,6 @@ private fun EmptyState(text: String, modifier: Modifier = Modifier) {
             Spacer(Modifier.height(8.dp))
             Text(text, color = Color(0xFF8ACABA), fontSize = 14.sp)
         }
-    }
-}
-
-private suspend fun sendCustomerMessage(
-    db: FirebaseFirestore,
-    plan: TreatmentPlan,
-    threadId: String,
-    senderId: String,
-    senderName: String,
-    message: String
-) {
-    withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val chatMessage = ConsultationChatMessage(
-            threadId = threadId,
-            appointmentId = plan.appointmentId,
-            treatmentPlanId = plan.id,
-            userId = plan.userId,
-            consultantId = plan.consultantId,
-            senderId = senderId,
-            senderName = senderName,
-            senderRole = ChatSenderRole.CUSTOMER,
-            message = message,
-            createdAt = now
-        )
-        db.collection("consultation_chat_messages").add(chatMessage.toFirestoreMap(includeCreatedAt = true)).await()
-        db.collection("consultation_chat_threads").document(threadId).update(
-            mapOf("lastMessage" to message, "lastMessageAt" to now, "updatedAt" to now)
-        ).await()
     }
 }
 

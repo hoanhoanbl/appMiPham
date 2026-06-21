@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.appbanmypham.data.local.AppDatabase
 import com.example.appbanmypham.model.OrderEntity
 import com.example.appbanmypham.model.OrderItem
@@ -140,6 +142,7 @@ val ORDER_STATUS_LIST = listOf(
     OrderStatusInfo("confirmed", "Đã xác nhận",  "✅", "Shop đã xác nhận, đang chuẩn bị",  Color(0xFF4A90D9), Color(0xFFE8F0FB), 1),
     OrderStatusInfo("shipping",  "Đang giao",    "🚚", "Đơn hàng đang trên đường đến bạn", Color(0xFF9B59B6), Color(0xFFF3E8FB), 2),
     OrderStatusInfo("done",      "Hoàn thành",   "🎉", "Bạn đã nhận được hàng thành công", MintGreen,         Color(0xFFEAF9F5), 3),
+    OrderStatusInfo("returned",  "Đã trả hàng",  "↩", "Đơn hàng đã hoàn tất trả hàng",    Color(0xFF7B61D1), Color(0xFFF0ECFF), 4),
     OrderStatusInfo("cancelled", "Đã hủy",       "❌", "Đơn hàng đã bị hủy",              Color(0xFFE57373), Color(0xFFFFECEC), -1)
 )
 val RETURN_REASONS = listOf(
@@ -152,6 +155,25 @@ val RETURN_REASONS = listOf(
 fun getOrderStatus(key: String) = ORDER_STATUS_LIST.find { it.key == key }
     ?: OrderStatusInfo(key, key, "📦", "", Color(0xFF8ACABA), Color(0xFFEAF9F5), 0)
 
+private fun isReturnedOrder(order: OrderEntity, myReturn: ReturnRequest?): Boolean =
+    order.status == "returned" || myReturn?.status == "completed"
+
+private fun effectiveOrderStatusKey(order: OrderEntity, myReturn: ReturnRequest?): String =
+    if (isReturnedOrder(order, myReturn)) "returned" else order.status
+
+private fun displayOrderStatus(order: OrderEntity, myReturn: ReturnRequest?): OrderStatusInfo =
+    getOrderStatus(effectiveOrderStatusKey(order, myReturn))
+
+private fun orderStatusIcon(statusKey: String): ImageVector = when (statusKey) {
+    "pending" -> Icons.Default.PendingActions
+    "confirmed" -> Icons.Default.Inventory2
+    "shipping" -> Icons.Default.LocalShipping
+    "done" -> Icons.Default.CheckCircle
+    "returned" -> Icons.Default.AssignmentReturn
+    "cancelled" -> Icons.Default.Cancel
+    else -> Icons.Default.ReceiptLong
+}
+
 data class OrderFilterTab(val key: String?, val label: String)
 
 val ORDER_TABS = listOf(
@@ -160,6 +182,7 @@ val ORDER_TABS = listOf(
     OrderFilterTab("confirmed", "Đã xác nhận"),
     OrderFilterTab("shipping",  "Đang giao"),
     OrderFilterTab("done",      "Hoàn thành"),
+    OrderFilterTab("returned",  "Đã trả hàng"),
     OrderFilterTab("cancelled", "Đã hủy")
 )
 
@@ -245,12 +268,16 @@ fun OrderScreen(onBack: () -> Unit = {}) {
         snackMsg?.let { snackbarHostState.showSnackbar(it); snackMsg = null }
     }
 
-    val filtered = orders.filter { o -> filterKey == null || o.status == filterKey }
+    val returnsByOrder = remember(myReturns) { myReturns.associateBy { it.orderId } }
+    val filtered = orders.filter { order ->
+        filterKey == null || effectiveOrderStatusKey(order, returnsByOrder[order.id]) == filterKey
+    }
 
     // ── Dialogs ───────────────────────────────────────────────────────────
     detailOrder?.let { order ->
         OrderDetailDialog(
             order     = order,
+            myReturn  = returnsByOrder[order.id],
             onDismiss = { detailOrder = null },
             onCancel  = if (order.status == "pending") { { cancelTarget = order; detailOrder = null } } else null
         )
@@ -403,15 +430,9 @@ fun OrderScreen(onBack: () -> Unit = {}) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                OrderDashboardPanel(
-                    orders = orders,
-                    selectedStatus = filterKey,
-                    onStatusClick = { filterKey = it }
-                )
-            }
-            item {
                 OrderFilterRow(
                     orders = orders,
+                    returnsByOrder = returnsByOrder,
                     selected = filterKey,
                     onSelect = { filterKey = it }
                 )
@@ -472,114 +493,9 @@ fun OrderScreen(onBack: () -> Unit = {}) {
 // Empty state
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun OrderDashboardPanel(
-    orders: List<OrderEntity>,
-    selectedStatus: String?,
-    onStatusClick: (String?) -> Unit
-) {
-    val completedTotal = remember(orders) {
-        orders.filter { it.status == "done" }.sumOf { it.totalPrice }
-    }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(3.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFEAF9F5)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MintGreen, modifier = Modifier.size(24.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Quản lý đơn hàng", color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                    Text("${orders.size} đơn trong tài khoản", color = Color(0xFF8ACABA), fontSize = 12.sp)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("${"%,.0f".format(completedTotal)}đ", color = Color(0xFFFF7A1A), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Text("đã hoàn tất", color = Color(0xFFAAD8CE), fontSize = 11.sp)
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OrderStatusShortcut(
-                    title = "Chờ xác nhận",
-                    count = orders.count { it.status == "pending" },
-                    icon = Icons.Default.PendingActions,
-                    selected = selectedStatus == "pending",
-                    onClick = { onStatusClick("pending") },
-                    modifier = Modifier.weight(1f)
-                )
-                OrderStatusShortcut(
-                    title = "Đang xử lý",
-                    count = orders.count { it.status == "confirmed" },
-                    icon = Icons.Default.Inventory2,
-                    selected = selectedStatus == "confirmed",
-                    onClick = { onStatusClick("confirmed") },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OrderStatusShortcut(
-                    title = "Đang giao",
-                    count = orders.count { it.status == "shipping" },
-                    icon = Icons.Default.LocalShipping,
-                    selected = selectedStatus == "shipping",
-                    onClick = { onStatusClick("shipping") },
-                    modifier = Modifier.weight(1f)
-                )
-                OrderStatusShortcut(
-                    title = "Hoàn tất",
-                    count = orders.count { it.status == "done" },
-                    icon = Icons.Default.CheckCircle,
-                    selected = selectedStatus == "done",
-                    onClick = { onStatusClick("done") },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun OrderStatusShortcut(
-    title: String,
-    count: Int,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .height(76.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0xFFEAF9F5) else Color(0xFFF8FFFE))
-            .border(
-                width = 1.dp,
-                color = if (selected) MintGreen.copy(alpha = 0.45f) else Color(0xFFEAF9F5),
-                shape = RoundedCornerShape(14.dp)
-            )
-            .clickable { onClick() }
-            .padding(10.dp)
-    ) {
-        Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Icon(icon, contentDescription = null, tint = MintGreen, modifier = Modifier.size(20.dp))
-                Text("$count", color = Color(0xFF1A4A40), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(title, color = Color(0xFF4A7A70), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-@Composable
 private fun OrderFilterRow(
     orders: List<OrderEntity>,
+    returnsByOrder: Map<String, ReturnRequest>,
     selected: String?,
     onSelect: (String?) -> Unit
 ) {
@@ -589,7 +505,7 @@ private fun OrderFilterRow(
     ) {
         items(ORDER_TABS) { tab ->
             val isSelected = tab.key == selected
-            val count = if (tab.key == null) orders.size else orders.count { it.status == tab.key }
+            val count = if (tab.key == null) orders.size else orders.count { effectiveOrderStatusKey(it, returnsByOrder[it.id]) == tab.key }
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
@@ -683,7 +599,8 @@ private fun OrderCard(
     onReviewItem   : (OrderItem) -> Unit,
     onRequestReturn: () -> Unit
 ) {
-    val info     = getOrderStatus(order.status)
+    val info     = displayOrderStatus(order, myReturn)
+    val statusKey = effectiveOrderStatusKey(order, myReturn)
     val items    = remember(order.itemsJson) { parseOrderItems(order.itemsJson) }
     val dateStr  = remember(order.createdAt) { SimpleDateFormat("dd/MM/yyyy  HH:mm", Locale.getDefault()).format(Date(order.createdAt)) }
     var expanded by remember { mutableStateOf(false) }
@@ -694,7 +611,7 @@ private fun OrderCard(
     }
 
     // Tự mở expand khi đơn done và còn sp chưa review
-    val hasUnreviewed = order.status == "done" && items.any { it.productId !in reviewedProductIds }
+    val hasUnreviewed = statusKey == "done" && items.any { it.productId !in reviewedProductIds }
 
     Card(
         modifier  = Modifier.fillMaxWidth(),
@@ -711,14 +628,22 @@ private fun OrderCard(
                     Text(dateStr, color = Color(0xFFAAD8CE), fontSize = 11.sp)
                 }
                 Box(modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(info.bgColor).padding(horizontal = 10.dp, vertical = 5.dp)) {
-                    Text("${info.emoji} ${info.label}", color = info.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(orderStatusIcon(statusKey), contentDescription = null, tint = info.color, modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(info.label, color = info.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
 
             Spacer(Modifier.height(12.dp))
 
             // ── Progress / cancelled ──────────────────────────────────────
-            if (order.status != "cancelled") {
+            if (statusKey == "returned") {
+                OrderProgressBar(currentStep = info.step, isReturned = true)
+                Spacer(Modifier.height(8.dp))
+                ReturnedOrderBanner(myReturn = myReturn)
+            } else if (statusKey != "cancelled") {
                 OrderProgressBar(currentStep = info.step)
             } else {
                 Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFFFFECEC)).padding(horizontal = 12.dp, vertical = 7.dp)) {
@@ -800,7 +725,7 @@ private fun OrderCard(
                         items.forEach { item ->
                             OrderItemRowWithReview(
                                 item              = item,
-                                isDone            = order.status == "done",
+                                isDone            = statusKey == "done",
                                 alreadyReviewed   = item.productId in reviewedProductIds,
                                 onReview          = { onReviewItem(item) },
                                 myReview          = myReviews.firstOrNull { it.productId == item.productId && it.orderId == order.id }
@@ -810,9 +735,9 @@ private fun OrderCard(
                 }
             }
             // ── Khu vực trả hàng — chỉ hiện khi đơn done ─────────────────
-            if (order.status == "done") {
+            if (statusKey == "done" || statusKey == "returned") {
                 Spacer(Modifier.height(10.dp))
-                if (myReturn == null) {
+                if (statusKey == "done" && myReturn == null) {
                     OutlinedButton(
                         onClick  = onRequestReturn,
                         modifier = Modifier.fillMaxWidth().height(38.dp),
@@ -825,21 +750,25 @@ private fun OrderCard(
                         Text("Yêu cầu trả hàng", fontSize = 12.sp)
                     }
                 } else {
-                    val rInfo = getReturnStatus(myReturn.status)
+                    val rInfo = myReturn?.let { getReturnStatus(it.status) } ?: getReturnStatus("completed")
+                    val adminNote = myReturn?.adminNote.orEmpty()
                     Column(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                             .background(rInfo.bgColor).padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Text("${rInfo.emoji} Yêu cầu trả hàng: ${rInfo.label}", color = rInfo.color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        if (myReturn.adminNote.isNotBlank()) {
+                        Text(
+                            if (statusKey == "returned") "Đơn hàng đã trả hàng" else "${rInfo.emoji} Yêu cầu trả hàng: ${rInfo.label}",
+                            color = rInfo.color,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (adminNote.isNotBlank()) {
                             Spacer(Modifier.height(4.dp))
-                            Text("Phản hồi: ${myReturn.adminNote}", color = rInfo.color.copy(0.8f), fontSize = 11.sp)
+                            Text("Phản hồi: $adminNote", color = rInfo.color.copy(0.8f), fontSize = 11.sp)
                         }
                     }
                 }
             }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = Color(0xFFEAF9F5))
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = Color(0xFFEAF9F5))
 
@@ -876,10 +805,33 @@ private fun OrderCard(
                         modifier = Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(10.dp)).background(info.bgColor),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("${info.emoji} ${info.label}", color = info.color, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text(info.label, color = info.color, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ReturnedOrderBanner(myReturn: ReturnRequest?) {
+    val adminNote = myReturn?.adminNote.orEmpty()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFF0ECFF))
+            .border(1.dp, Color(0xFF7B61D1).copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AssignmentReturn, contentDescription = null, tint = Color(0xFF7B61D1), modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Đã trả hàng", color = Color(0xFF7B61D1), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        if (adminNote.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text("Phản hồi: $adminNote", color = Color(0xFF6D5BB7), fontSize = 11.sp, lineHeight = 15.sp)
         }
     }
 }
@@ -903,7 +855,13 @@ private fun OrderItemRowWithReview(
             .padding(10.dp)
     ) {
         // Tên + giá
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            ProductOrderThumb(
+                imageUrl = item.imageUrl,
+                productName = item.name,
+                modifier = Modifier.size(58.dp)
+            )
+            Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(item.name, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (item.brandName.isNotEmpty()) Text(item.brandName, color = MintGreen, fontSize = 11.sp)
@@ -965,12 +923,49 @@ private fun OrderItemRowWithReview(
 // Progress Bar
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun OrderProgressBar(currentStep: Int) {
-    val steps = listOf("Chờ\nxác nhận" to "⏳", "Đã\nxác nhận" to "✅", "Đang\ngiao" to "🚚", "Hoàn\nthành" to "🎉")
+private fun ProductOrderThumb(
+    imageUrl: String,
+    productName: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFFEAF9F5)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageUrl.isNotBlank()) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = "Ảnh sản phẩm $productName",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(
+                Icons.Default.ShoppingBag,
+                contentDescription = null,
+                tint = MintGreen,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun OrderProgressBar(currentStep: Int, isReturned: Boolean = false) {
+    val baseSteps = listOf(
+        "Chờ\nxác nhận" to Icons.Default.PendingActions,
+        "Đã\nxác nhận" to Icons.Default.Inventory2,
+        "Đang\ngiao" to Icons.Default.LocalShipping,
+        "Hoàn\nthành" to Icons.Default.CheckCircle
+    )
+    val steps = if (isReturned) baseSteps + ("Đã trả\nhàng" to Icons.Default.AssignmentReturn) else baseSteps
+    val activeStep = if (isReturned) steps.lastIndex else currentStep.coerceIn(0, steps.lastIndex)
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        steps.forEachIndexed { index, (label, emoji) ->
-            val isDone    = index < currentStep
-            val isCurrent = index == currentStep
+        steps.forEachIndexed { index, (label, icon) ->
+            val isDone    = index < activeStep
+            val isCurrent = index == activeStep
             Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     modifier = Modifier.size(30.dp).clip(CircleShape).background(
@@ -981,8 +976,12 @@ private fun OrderProgressBar(currentStep: Int) {
                         }
                     ), contentAlignment = Alignment.Center
                 ) {
-                    if (isDone) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                    else Text(emoji, fontSize = if (isCurrent) 13.sp else 11.sp)
+                    Icon(
+                        if (isDone) Icons.Default.Check else icon,
+                        null,
+                        tint = if (isCurrent || isDone) Color.White else Color(0xFFAAD8CE),
+                        modifier = Modifier.size(15.dp)
+                    )
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(label, color = when { isCurrent -> MintGreen; isDone -> MintGreen.copy(0.55f); else -> Color(0xFFCCE8DF) },
@@ -990,7 +989,7 @@ private fun OrderProgressBar(currentStep: Int) {
             }
             if (index < steps.size - 1) {
                 Box(modifier = Modifier.weight(0.4f).padding(top = 14.dp).height(2.dp)
-                    .background(if (index < currentStep) MintGreen.copy(0.45f) else Color(0xFFEAF9F5)))
+                    .background(if (index < activeStep) MintGreen.copy(0.45f) else Color(0xFFEAF9F5)))
             }
         }
     }
@@ -1000,8 +999,14 @@ private fun OrderProgressBar(currentStep: Int) {
 // Order Detail Dialog
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun OrderDetailDialog(order: OrderEntity, onDismiss: () -> Unit, onCancel: (() -> Unit)?) {
-    val info    = getOrderStatus(order.status)
+private fun OrderDetailDialog(
+    order: OrderEntity,
+    myReturn: ReturnRequest?,
+    onDismiss: () -> Unit,
+    onCancel: (() -> Unit)?
+) {
+    val info    = displayOrderStatus(order, myReturn)
+    val statusKey = effectiveOrderStatusKey(order, myReturn)
     val items   = remember(order.itemsJson) { parseOrderItems(order.itemsJson) }
     val dateStr = remember(order.createdAt) { SimpleDateFormat("dd/MM/yyyy  HH:mm:ss", Locale.getDefault()).format(Date(order.createdAt)) }
 
@@ -1012,12 +1017,28 @@ private fun OrderDetailDialog(order: OrderEntity, onDismiss: () -> Unit, onCance
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column { Text("Chi tiết đơn hàng", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 17.sp); Text("#${order.id.take(8).uppercase()}", color = Color(0xFFAAD8CE), fontSize = 12.sp) }
                         Box(modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(info.bgColor).padding(horizontal = 10.dp, vertical = 5.dp)) {
-                            Text("${info.emoji} ${info.label}", color = info.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    orderStatusIcon(statusKey),
+                                    contentDescription = null,
+                                    tint = info.color,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(info.label, color = info.color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                     Spacer(Modifier.height(4.dp)); Text(info.desc, color = info.color.copy(0.8f), fontSize = 12.sp); Spacer(Modifier.height(14.dp))
                 }
-                if (order.status != "cancelled") {
+                if (statusKey == "returned") {
+                    item {
+                        OrderProgressBar(currentStep = info.step, isReturned = true)
+                        Spacer(Modifier.height(10.dp))
+                        ReturnedOrderBanner(myReturn = myReturn)
+                        Spacer(Modifier.height(16.dp))
+                    }
+                } else if (statusKey != "cancelled") {
                     item { OrderProgressBar(currentStep = info.step); Spacer(Modifier.height(16.dp)) }
                 } else {
                     item { Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFFFFECEC)).padding(12.dp)) { Text("❌  Đơn hàng này đã bị hủy", color = Color(0xFFE57373), fontSize = 13.sp, fontWeight = FontWeight.Medium) }; Spacer(Modifier.height(14.dp)) }
@@ -1033,10 +1054,16 @@ private fun OrderDetailDialog(order: OrderEntity, onDismiss: () -> Unit, onCance
                 }
                 item { DetailSectionLabel("Sản phẩm (${items.size})") }
                 items(items) { item ->
-                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ProductOrderThumb(
+                            imageUrl = item.imageUrl,
+                            productName = item.name,
+                            modifier = Modifier.size(54.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(item.name, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            if (item.brandName.isNotEmpty()) Text(item.brandName, color = MintGreen, fontSize = 11.sp)
+                            Text(item.name, color = Color(0xFF1A4A40), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (item.brandName.isNotEmpty()) Text(item.brandName, color = MintGreen, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Spacer(Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.End) {

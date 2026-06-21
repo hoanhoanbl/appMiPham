@@ -35,6 +35,7 @@ import com.example.appbanmypham.model.TREATMENT_SESSION_STATUSES
 import com.example.appbanmypham.model.TreatmentPlan
 import com.example.appbanmypham.model.TreatmentProgressPhoto
 import com.example.appbanmypham.model.TreatmentSession
+import com.example.appbanmypham.model.customerConsultationThreadId
 import com.example.appbanmypham.model.firestoreDocToTreatmentPlan
 import com.example.appbanmypham.model.firestoreDocToTreatmentProgressPhoto
 import com.example.appbanmypham.model.firestoreDocToTreatmentSession
@@ -47,6 +48,7 @@ import com.example.appbanmypham.ui.theme.BackgroundPrimary
 import com.example.appbanmypham.ui.theme.MintGreen
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.SetOptions
 import java.util.Calendar
 
 class ManageTreatmentActivity : ComponentActivity() {
@@ -166,6 +168,13 @@ fun ManageTreatmentScreen(onBack: () -> Unit = {}) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        TreatmentMetricCard(Modifier.weight(1f), plans.size.toString(), "Li\u1EC7u tr\u00ECnh", Icons.Default.Spa, MintGreen)
+                        TreatmentMetricCard(Modifier.weight(1f), plans.count { it.status == "active" }.toString(), "\u0110ang ch\u1EA1y", Icons.Default.EventAvailable, Color(0xFF4A90D9))
+                        TreatmentMetricCard(Modifier.weight(1f), sessions.count { it.status == "no_show" }.toString(), "No-show", Icons.Default.Photo, Color(0xFFE8A44A))
+                    }
+                }
+                item {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -179,7 +188,7 @@ fun ManageTreatmentScreen(onBack: () -> Unit = {}) {
                 }
                 item {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item { FilterPill("Tất cả", filteredPlans.size, planStatusFilter == null, MintGreen) { planStatusFilter = null } }
+                        item { FilterPill("T\u1EA5t c\u1EA3", filteredPlans.size, planStatusFilter == null, MintGreen) { planStatusFilter = null } }
                         items(TREATMENT_PLAN_STATUSES) { status ->
                             FilterPill(status.label, plans.count { it.status == status.key }, planStatusFilter == status.key, MintGreen) {
                                 planStatusFilter = if (planStatusFilter == status.key) null else status.key
@@ -219,6 +228,8 @@ fun ManageTreatmentScreen(onBack: () -> Unit = {}) {
                 selectedPlan?.let { plan ->
                     item {
                         SectionCard {
+                            SelectedPlanSummary(plan)
+                            Spacer(Modifier.height(12.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                 TreatmentDetailTab.values().forEach { tab ->
                                     Box(
@@ -238,7 +249,7 @@ fun ManageTreatmentScreen(onBack: () -> Unit = {}) {
                             if (detailTab == TreatmentDetailTab.SESSIONS) {
                                 SectionTitle(Icons.Default.EventAvailable, "Buổi điều trị")
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                item { FilterPill("Tất cả", sessions.count { it.treatmentPlanId == plan.id }, sessionStatusFilter == null, MintGreen) { sessionStatusFilter = null } }
+                                item { FilterPill("T\u1EA5t c\u1EA3", sessions.count { it.treatmentPlanId == plan.id }, sessionStatusFilter == null, MintGreen) { sessionStatusFilter = null } }
                                 items(TREATMENT_SESSION_STATUSES) { status ->
                                     FilterPill(status.label, sessions.count { it.treatmentPlanId == plan.id && it.status == status.key }, sessionStatusFilter == status.key, statusColor(status.key)) {
                                         sessionStatusFilter = if (sessionStatusFilter == status.key) null else status.key
@@ -249,7 +260,7 @@ fun ManageTreatmentScreen(onBack: () -> Unit = {}) {
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(TreatmentDateQuickFilter.values()) { option ->
                                         FilterPill(
-                                            option.label,
+                                            treatmentDateFilterLabel(option),
                                             sessions.count { it.treatmentPlanId == plan.id && matchesTreatmentDateFilter(it.scheduledStartAt, option) },
                                             sessionDateFilter == option,
                                             MintGreen
@@ -317,7 +328,21 @@ fun ManageTreatmentScreen(onBack: () -> Unit = {}) {
                         db.collection("treatment_plans").document(plan.id).update(updates)
                             .addOnSuccessListener {
                                 db.collection("appointments").document(plan.appointmentId).update(updates)
-                                db.collection("consultation_chat_threads").document(plan.chatThreadId.ifBlank { plan.appointmentId }).update(updates)
+                                val threadId = plan.userId.takeIf { it.isNotBlank() }?.let { customerConsultationThreadId(it) }
+                                    ?: plan.chatThreadId.ifBlank { plan.appointmentId }
+                                db.collection("treatment_plans").document(plan.id).update(mapOf("chatThreadId" to threadId))
+                                db.collection("consultation_chat_threads").document(threadId).set(
+                                    updates + mapOf(
+                                        "appointmentId" to plan.appointmentId,
+                                        "treatmentPlanId" to plan.id,
+                                        "userId" to plan.userId,
+                                        "userEmail" to plan.userEmail,
+                                        "userName" to plan.userName,
+                                        "status" to "active",
+                                        "updatedAt" to now
+                                    ),
+                                    SetOptions.merge()
+                                )
                                 db.collection("treatment_sessions")
                                     .whereEqualTo("treatmentPlanId", plan.id)
                                     .get()
@@ -376,6 +401,44 @@ private fun AdminPlanCard(plan: TreatmentPlan, selected: Boolean, onClick: () ->
                 TextButton(onClick = onReassign, contentPadding = PaddingValues(0.dp)) { Text("Đổi tư vấn", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
             }
         }
+    }
+}
+
+@Composable
+private fun TreatmentMetricCard(
+    modifier: Modifier,
+    value: String,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(1.dp)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(color.copy(0.14f)), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(17.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(value, color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = Color(0xFF6C8F87), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SelectedPlanSummary(plan: TreatmentPlan) {
+    val progress = if (plan.sessionCount > 0) "${plan.completedSessionCount}/${plan.sessionCount}" else "0/0"
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFFF8FFFE)).padding(12.dp)) {
+        Text(plan.packageName, color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(6.dp))
+        Text(plan.userName.ifBlank { plan.userEmail }, color = Color(0xFF5A8A80), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Ti\u1EBFn \u0111\u1ED9: $progress bu\u1ED5i", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("T\u01B0 v\u1EA5n: ${plan.consultantName.ifBlank { plan.consultantEmail.ifBlank { "Ch\u01B0a g\u00E1n" } }}", color = Color(0xFF6C8F87), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Chat/L\u1ECBch: ${plan.chatThreadId.ifBlank { plan.appointmentId }.ifBlank { "Ch\u01B0a c\u00F3" }}", color = Color(0xFF8ACABA), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -444,6 +507,13 @@ private fun statusColor(status: String): Color = when (status) {
     "cancelled" -> Color(0xFFE57373)
     "no_show" -> Color(0xFFE8A44A)
     else -> Color(0xFF8ACABA)
+}
+
+private fun treatmentDateFilterLabel(filter: TreatmentDateQuickFilter): String = when (filter) {
+    TreatmentDateQuickFilter.ALL -> "T\u1EA5t c\u1EA3 ng\u00E0y"
+    TreatmentDateQuickFilter.TODAY -> "H\u00F4m nay"
+    TreatmentDateQuickFilter.UPCOMING -> "S\u1EAFp t\u1EDBi"
+    TreatmentDateQuickFilter.PAST -> "\u0110\u00E3 qua"
 }
 
 private fun matchesTreatmentDateFilter(startAt: Long, filter: TreatmentDateQuickFilter): Boolean {

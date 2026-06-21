@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -27,11 +28,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.appbanmypham.model.AppRoles
 import com.example.appbanmypham.model.AppointmentStatus
 import com.example.appbanmypham.model.ChatThreadStatus
@@ -44,9 +47,11 @@ import com.example.appbanmypham.model.TreatmentPlanStatus
 import com.example.appbanmypham.model.ACTIVE_TREATMENT_PLAN_KEYS_COLLECTION
 import com.example.appbanmypham.model.activeTreatmentPlanKey
 import com.example.appbanmypham.model.appointmentStatusMeta
+import com.example.appbanmypham.model.customerConsultationThreadId
 import com.example.appbanmypham.model.firestoreDocToConsultationChatThread
 import com.example.appbanmypham.model.firestoreDocToSpaCapacitySettings
 import com.example.appbanmypham.model.firestoreDocToSpaAppointment
+import com.example.appbanmypham.model.firestoreDocToSpaPackage
 import com.example.appbanmypham.model.toFirestoreMap
 import com.example.appbanmypham.ui.auth.LoginActivity
 import com.example.appbanmypham.ui.theme.AppBanMyPhamTheme
@@ -62,7 +67,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Locale
 
 class ConsultantDashboardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,10 +97,10 @@ class ConsultantDashboardActivity : ComponentActivity() {
 
 private enum class ConsultantHomeTab { SCHEDULES, CHAT }
 private enum class ConsultantDateQuickFilter(val label: String) {
-    ALL("Tất cả ngày"),
-    TODAY("Hôm nay"),
-    UPCOMING("Sắp tới"),
-    PAST("Đã qua")
+    ALL("T\u1EA5t c\u1EA3 ng\u00E0y"),
+    TODAY("H\u00F4m nay"),
+    UPCOMING("S\u1EAFp t\u1EDBi"),
+    PAST("\u0110\u00E3 qua")
 }
 
 @Composable
@@ -109,7 +116,12 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
     var isConsultant by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf(listOf<SpaAppointment>()) }
     var assigned by remember { mutableStateOf(listOf<SpaAppointment>()) }
-    var chatThreads by remember { mutableStateOf(listOf<ConsultationChatThread>()) }
+    var spaPackageImages by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var assignedChatThreads by remember { mutableStateOf(listOf<ConsultationChatThread>()) }
+    var openChatThreads by remember { mutableStateOf(listOf<ConsultationChatThread>()) }
+    val chatThreads = remember(assignedChatThreads, openChatThreads) {
+        dedupeChatThreadsByCustomer(assignedChatThreads + openChatThreads)
+    }
     var mainTab by remember { mutableStateOf(ConsultantHomeTab.SCHEDULES) }
     var selectedTab by remember { mutableStateOf(0) }
     var dateFilter by remember { mutableStateOf(ConsultantDateQuickFilter.ALL) }
@@ -149,13 +161,28 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                     ?.sortedWith(compareBy<SpaAppointment> { it.startAt }.thenBy { it.createdAt })
                     ?: emptyList()
             }
+        regs += db.collection("spa_packages")
+            .addSnapshotListener { snap, _ ->
+                spaPackageImages = snap?.documents
+                    ?.mapNotNull { runCatching { firestoreDocToSpaPackage(it) }.getOrNull() }
+                    ?.associate { it.id to it.imageUrl }
+                    ?: emptyMap()
+            }
         regs += db.collection("consultation_chat_threads")
             .whereEqualTo("consultantId", user.uid)
             .addSnapshotListener { snap, _ ->
-                chatThreads = snap?.documents
+                assignedChatThreads = snap?.documents
                     ?.mapNotNull { runCatching { firestoreDocToConsultationChatThread(it) }.getOrNull() }
-                    ?.sortedByDescending { it.lastMessageAt.takeIf { time -> time > 0L } ?: it.updatedAt }
-                    ?.distinctBy { thread -> thread.treatmentPlanId.ifBlank { thread.appointmentId.ifBlank { thread.id } } }
+                    ?.sortedByDescending { chatSortTime(it) }
+                    ?: emptyList()
+            }
+        regs += db.collection("consultation_chat_threads")
+            .whereEqualTo("consultantId", "")
+            .addSnapshotListener { snap, _ ->
+                openChatThreads = snap?.documents
+                    ?.mapNotNull { runCatching { firestoreDocToConsultationChatThread(it) }.getOrNull() }
+                    ?.filter { it.userId.isNotBlank() }
+                    ?.sortedByDescending { chatSortTime(it) }
                     ?: emptyList()
             }
         onDispose { regs.forEach { it.remove() } }
@@ -171,14 +198,14 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                         selected = mainTab == ConsultantHomeTab.SCHEDULES,
                         onClick = { mainTab = ConsultantHomeTab.SCHEDULES },
                         icon = { Icon(Icons.Default.EventAvailable, contentDescription = null) },
-                        label = { Text("Lịch") },
+                        label = { Text("L\u1ECBch l\u00E0m vi\u1EC7c") },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = MintGreen, selectedTextColor = MintGreen)
                     )
                     NavigationBarItem(
                         selected = mainTab == ConsultantHomeTab.CHAT,
                         onClick = { mainTab = ConsultantHomeTab.CHAT },
                         icon = { Icon(Icons.Default.Chat, contentDescription = null) },
-                        label = { Text("Chat") },
+                        label = { Text("Tin nh\u1EAFn") },
                         colors = NavigationBarItemDefaults.colors(selectedIconColor = MintGreen, selectedTextColor = MintGreen)
                     )
                 }
@@ -197,8 +224,8 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
 
                 if (mainTab == ConsultantHomeTab.SCHEDULES) {
                     TabRow(selectedTabIndex = selectedTab, containerColor = Color.White, contentColor = MintGreen) {
-                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Chờ xác nhận (${pending.size})") })
-                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Lịch của tôi (${assigned.size})") })
+                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Ch\u1EDD nh\u1EADn (${pending.size})") })
+                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("\u0110ang ph\u1EE5 tr\u00E1ch (${assigned.size})") })
                     }
 
                     val baseList = if (selectedTab == 0) pending else assigned
@@ -209,7 +236,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                     ) {
                         items(ConsultantDateQuickFilter.values()) { option ->
                             QuickFilterPill(
-                                label = option.label,
+                                label = consultantDateFilterLabel(option),
                                 count = baseList.count { matchesConsultantDateFilter(it.startAt, option) },
                                 selected = dateFilter == option,
                                 onClick = { dateFilter = option }
@@ -219,13 +246,11 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
 
                     val list = baseList.filter { matchesConsultantDateFilter(it.startAt, dateFilter) }
                     if (list.isEmpty()) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.EventAvailable, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text(if (selectedTab == 0) "Không có lịch chờ xác nhận" else "Chưa có lịch phù hợp", color = Color(0xFF8ACABA), fontSize = 15.sp)
-                            }
-                        }
+                        OperationalEmptyState(
+                            icon = Icons.Default.EventAvailable,
+                            title = if (selectedTab == 0) "Kh\u00F4ng c\u00F3 l\u1ECBch ch\u1EDD nh\u1EADn" else "Ch\u01B0a c\u00F3 l\u1ECBch ph\u00F9 h\u1EE3p",
+                            subtitle = if (selectedTab == 0) "C\u00E1c l\u1ECBch m\u1EDBi c\u1EA7n t\u01B0 v\u1EA5n s\u1EBD xu\u1EA5t hi\u1EC7n t\u1EA1i \u0111\u00E2y." else "Th\u1EED \u0111\u1ED5i b\u1ED9 l\u1ECDc ng\u00E0y \u0111\u1EC3 xem l\u1ECBch kh\u00E1c."
+                        )
                     } else {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
@@ -235,6 +260,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                             items(list, key = { it.id }) { appointment ->
                                 ConsultantAppointmentCard(
                                     appointment = appointment,
+                                    packageImageUrl = spaPackageImages[appointment.spaPackageId].orEmpty(),
                                     showConfirm = selectedTab == 0,
                                     onOpenDetail = {
                                         context.startActivity(
@@ -246,7 +272,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                                         scope.launch {
                                             val result = runCatching { confirmAppointment(db, appointment.id, user!!) }
                                             snackbarHostState.showSnackbar(
-                                                if (result.isSuccess) "Đã nhận lịch và mở chat" else result.exceptionOrNull()?.message ?: "Nhận lịch thất bại"
+                                                if (result.isSuccess) "\u0110\u00E3 nh\u1EADn l\u1ECBch" else result.exceptionOrNull()?.message ?: "Nh\u1EADn l\u1ECBch th\u1EA5t b\u1EA1i"
                                             )
                                         }
                                     },
@@ -254,7 +280,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                                         scope.launch {
                                             val result = runCatching { checkInAppointment(db, appointment.id, user!!) }
                                             snackbarHostState.showSnackbar(
-                                                if (result.isSuccess) "Đã check-in khách" else result.exceptionOrNull()?.message ?: "Check-in thất bại"
+                                                if (result.isSuccess) "\u0110\u00E3 check-in kh\u00E1ch" else result.exceptionOrNull()?.message ?: "Check-in th\u1EA5t b\u1EA1i"
                                             )
                                         }
                                     },
@@ -262,7 +288,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                                         scope.launch {
                                             val result = runCatching { startServiceAppointment(db, appointment.id, user!!) }
                                             snackbarHostState.showSnackbar(
-                                                if (result.isSuccess) "Đã bắt đầu dịch vụ" else result.exceptionOrNull()?.message ?: "Cập nhật thất bại"
+                                                if (result.isSuccess) "\u0110\u00E3 b\u1EAFt \u0111\u1EA7u d\u1ECBch v\u1EE5" else result.exceptionOrNull()?.message ?: "C\u1EADp nh\u1EADt th\u1EA5t b\u1EA1i"
                                             )
                                         }
                                     },
@@ -270,7 +296,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                                         scope.launch {
                                             val result = runCatching { completeAppointment(db, appointment.id, user!!) }
                                             snackbarHostState.showSnackbar(
-                                                if (result.isSuccess) "Đã cập nhật lịch" else result.exceptionOrNull()?.message ?: "Cập nhật thất bại"
+                                                if (result.isSuccess) "\u0110\u00E3 c\u1EADp nh\u1EADt l\u1ECBch" else result.exceptionOrNull()?.message ?: "C\u1EADp nh\u1EADt th\u1EA5t b\u1EA1i"
                                             )
                                         }
                                     },
@@ -278,7 +304,7 @@ fun ConsultantDashboardScreen(onLogout: () -> Unit = {}) {
                                         scope.launch {
                                             val result = runCatching { markAppointmentNoShow(db, appointment.id, user!!) }
                                             snackbarHostState.showSnackbar(
-                                                if (result.isSuccess) "Đã đánh dấu khách không đến" else result.exceptionOrNull()?.message ?: "Cập nhật thất bại"
+                                                if (result.isSuccess) "\u0110\u00E3 \u0111\u00E1nh d\u1EA5u kh\u00E1ch kh\u00F4ng \u0111\u1EBFn" else result.exceptionOrNull()?.message ?: "C\u1EADp nh\u1EADt th\u1EA5t b\u1EA1i"
                                             )
                                         }
                                     }
@@ -308,13 +334,11 @@ private fun ConsultantChatTab(
     onOpenThread: (ConsultationChatThread) -> Unit
 ) {
     if (threads.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
-                Spacer(Modifier.height(8.dp))
-                Text("Chưa có cuộc chat nào", color = Color(0xFF8ACABA), fontSize = 15.sp)
-            }
-        }
+        OperationalEmptyState(
+            icon = Icons.Default.Chat,
+            title = "Ch\u01B0a c\u00F3 cu\u1ED9c tr\u00F2 chuy\u1EC7n",
+            subtitle = "Khi b\u1EA1n nh\u1EADn l\u1ECBch, tin nh\u1EAFn c\u1EE7a kh\u00E1ch s\u1EBD \u0111\u01B0\u1EE3c gom \u1EDF \u0111\u00E2y."
+        )
         return
     }
     LazyColumn(
@@ -323,25 +347,56 @@ private fun ConsultantChatTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Hộp thoại khách hàng", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text("Tin nh\u1EAFn kh\u00E1ch h\u00E0ng", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 20.sp)
             Spacer(Modifier.height(4.dp))
-            Text("Chạm vào khách để mở đúng cuộc trò chuyện. Hồ sơ khách nằm trong màn chi tiết.", color = Color(0xFF6C8F87), fontSize = 12.sp)
+            Text(
+                "M\u1ED7i kh\u00E1ch c\u00F3 m\u1ED9t cu\u1ED9c tr\u00F2 chuy\u1EC7n ch\u00EDnh. H\u1ED3 s\u01A1 m\u1EDF t\u1EEB header chat.",
+                color = Color(0xFF6C8F87),
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+            )
         }
         items(threads, key = { it.id }) { thread ->
+            val contextLabel = when {
+                thread.consultantId.isBlank() -> "Kh\u00E1ch \u0111ang ch\u1EDD t\u01B0 v\u1EA5n"
+                thread.treatmentPlanId.isNotBlank() -> "Cu\u1ED9c tr\u00F2 chuy\u1EC7n li\u1EC7u tr\u00ECnh"
+                thread.appointmentId.isNotBlank() -> "Cu\u1ED9c tr\u00F2 chuy\u1EC7n l\u1ECBch spa"
+                else -> "Cu\u1ED9c tr\u00F2 chuy\u1EC7n ch\u00EDnh"
+            }
+            val lastActive = formatChatActivity(thread.lastMessageAt.takeIf { it > 0L } ?: thread.updatedAt)
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onOpenThread(thread) },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 elevation = CardDefaults.cardElevation(2.dp)
             ) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFEAF9F5)), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFEAF9F5)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen)
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(thread.userName.ifBlank { thread.userEmail.ifBlank { "Khách hàng" } }, color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(thread.lastMessage.ifBlank { "Mở chat để trao đổi với khách" }, color = Color(0xFF6C8F87), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                thread.userName.ifBlank { thread.userEmail.ifBlank { "Kh\u00E1ch h\u00E0ng" } },
+                                color = Color(0xFF1A4A40),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(lastActive, color = Color(0xFF8ACABA), fontSize = 10.sp)
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(contextLabel, color = MintGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            thread.lastMessage.ifBlank { "Ch\u01B0a c\u00F3 tin nh\u1EAFn. M\u1EDF chat \u0111\u1EC3 trao \u0111\u1ED5i." },
+                            color = Color(0xFF6C8F87),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     Icon(Icons.Default.Chat, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(18.dp))
                 }
@@ -349,6 +404,52 @@ private fun ConsultantChatTab(
         }
     }
 }
+
+@Composable
+private fun OperationalEmptyState(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String
+) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFFEAF9F5)), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = MintGreen, modifier = Modifier.size(32.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(title, color = Color(0xFF1A4A40), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(subtitle, color = Color(0xFF8ACABA), fontSize = 13.sp, lineHeight = 18.sp)
+        }
+    }
+}
+
+private fun consultantDateFilterLabel(filter: ConsultantDateQuickFilter): String = when (filter) {
+    ConsultantDateQuickFilter.ALL -> "T\u1EA5t c\u1EA3 ng\u00E0y"
+    ConsultantDateQuickFilter.TODAY -> "H\u00F4m nay"
+    ConsultantDateQuickFilter.UPCOMING -> "S\u1EAFp t\u1EDBi"
+    ConsultantDateQuickFilter.PAST -> "\u0110\u00E3 qua"
+}
+
+private fun formatChatActivity(timeMillis: Long): String {
+    if (timeMillis <= 0L) return "M\u1EDBi"
+    return SimpleDateFormat("dd/MM HH:mm", Locale("vi", "VN")).format(java.util.Date(timeMillis))
+}
+
+private fun chatSortTime(thread: ConsultationChatThread): Long =
+    thread.lastMessageAt.takeIf { it > 0L } ?: thread.updatedAt
+
+private fun dedupeChatThreadsByCustomer(threads: List<ConsultationChatThread>): List<ConsultationChatThread> =
+    threads
+        .groupBy { it.userId.ifBlank { it.userEmail.ifBlank { it.id } } }
+        .values
+        .mapNotNull { group ->
+            group.maxWithOrNull(
+                compareBy<ConsultationChatThread> { if (it.userId.isNotBlank() && it.id == customerConsultationThreadId(it.userId)) 1 else 0 }
+                    .thenBy { chatSortTime(it) }
+            )
+        }
+        .sortedByDescending { chatSortTime(it) }
 
 private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: String, user: com.google.firebase.auth.FirebaseUser) {
     withContext(Dispatchers.IO) {
@@ -371,7 +472,7 @@ private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: Str
             val status = snap.getString("status") ?: AppointmentStatus.PENDING
             val consultantId = snap.getString("consultantId") ?: ""
             if (status != AppointmentStatus.PENDING || consultantId.isNotBlank()) {
-                throw IllegalStateException("Lịch này đã được tư vấn viên khác nhận")
+                throw IllegalStateException("L\u1ECBch n\u00E0y \u0111\u00E3 \u0111\u01B0\u1EE3c t\u01B0 v\u1EA5n vi\u00EAn kh\u00E1c nh\u1EADn")
             }
             val now = System.currentTimeMillis()
             val consultantName = user.displayName ?: user.email?.substringBefore("@") ?: "Consultant"
@@ -387,7 +488,10 @@ private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: Str
                 )
             )
             val planId = planDoc?.id.orEmpty()
-            val threadId = planDoc?.getString("chatThreadId")?.takeIf { it.isNotBlank() } ?: appointmentId
+            val appointmentUserId = snap.getString("userId") ?: ""
+            val threadId = appointmentUserId.takeIf { it.isNotBlank() }?.let { customerConsultationThreadId(it) }
+                ?: planDoc?.getString("chatThreadId")?.takeIf { it.isNotBlank() }
+                ?: appointmentId
             planDoc?.let { plan ->
                 transaction.update(
                     plan.reference,
@@ -396,6 +500,7 @@ private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: Str
                         "consultantEmail" to user.email.orEmpty(),
                         "consultantName" to consultantName,
                         "status" to TreatmentPlanStatus.ACTIVE,
+                        "revenueRecognizedAt" to (plan.getLong("revenueRecognizedAt") ?: now),
                         "chatThreadId" to threadId,
                         "updatedAt" to now
                     )
@@ -415,7 +520,7 @@ private suspend fun confirmAppointment(db: FirebaseFirestore, appointmentId: Str
                 mapOf(
                     "appointmentId" to appointmentId,
                     "treatmentPlanId" to planId,
-                    "userId" to (snap.getString("userId") ?: ""),
+                    "userId" to appointmentUserId,
                     "userEmail" to (snap.getString("userEmail") ?: ""),
                     "userName" to (snap.getString("userName") ?: ""),
                     "consultantId" to user.uid,
@@ -441,7 +546,7 @@ private suspend fun checkInAppointment(db: FirebaseFirestore, appointmentId: Str
             val status = snap.getString("status") ?: AppointmentStatus.PENDING
             val consultantId = snap.getString("consultantId") ?: ""
             if (status !in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED) || consultantId != user.uid) {
-                throw IllegalStateException("Chỉ tư vấn viên phụ trách mới được check-in lịch này")
+                throw IllegalStateException("Ch\u1EC9 t\u01B0 v\u1EA5n vi\u00EAn ph\u1EE5 tr\u00E1ch m\u1EDBi \u0111\u01B0\u1EE3c check-in l\u1ECBch n\u00E0y")
             }
             val now = System.currentTimeMillis()
             transaction.update(
@@ -465,7 +570,7 @@ private suspend fun startServiceAppointment(db: FirebaseFirestore, appointmentId
             val status = snap.getString("status") ?: AppointmentStatus.PENDING
             val consultantId = snap.getString("consultantId") ?: ""
             if (status != AppointmentStatus.CHECKED_IN || consultantId != user.uid) {
-                throw IllegalStateException("Chỉ lịch đã check-in mới được bắt đầu dịch vụ")
+                throw IllegalStateException("Ch\u1EC9 l\u1ECBch \u0111\u00E3 check-in m\u1EDBi \u0111\u01B0\u1EE3c b\u1EAFt \u0111\u1EA7u d\u1ECBch v\u1EE5")
             }
             val now = System.currentTimeMillis()
             transaction.update(
@@ -491,10 +596,10 @@ private suspend fun completeAppointment(db: FirebaseFirestore, appointmentId: St
             val startAt = snap.getLong("startAt") ?: 0L
             val now = System.currentTimeMillis()
             if (status != AppointmentStatus.IN_SERVICE || consultantId != user.uid) {
-                throw IllegalStateException("Chỉ lịch đang làm dịch vụ mới được hoàn thành")
+                throw IllegalStateException("Ch\u1EC9 l\u1ECBch \u0111ang l\u00E0m d\u1ECBch v\u1EE5 m\u1EDBi \u0111\u01B0\u1EE3c ho\u00E0n th\u00E0nh")
             }
             if (startAt > now) {
-                throw IllegalStateException("Chưa tới giờ hẹn, không thể hoàn thành lịch tương lai")
+                throw IllegalStateException("Ch\u01B0a t\u1EDBi gi\u1EDD h\u1EB9n, kh\u00F4ng th\u1EC3 ho\u00E0n th\u00E0nh l\u1ECBch t\u01B0\u01A1ng lai")
             }
             transaction.update(
                 ref,
@@ -599,11 +704,11 @@ private suspend fun markAppointmentNoShow(db: FirebaseFirestore, appointmentId: 
             val consultantId = snap.getString("consultantId") ?: ""
             val startAt = snap.getLong("startAt") ?: 0L
             if (status !in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED) || consultantId != user.uid) {
-                throw IllegalStateException("Chỉ tư vấn viên phụ trách mới được đánh dấu khách không đến")
+                throw IllegalStateException("Ch\u1EC9 t\u01B0 v\u1EA5n vi\u00EAn ph\u1EE5 tr\u00E1ch m\u1EDBi \u0111\u01B0\u1EE3c \u0111\u00E1nh d\u1EA5u kh\u00E1ch kh\u00F4ng \u0111\u1EBFn")
             }
             val now = System.currentTimeMillis()
             if (now < startAt + graceMillis) {
-                throw IllegalStateException("Chưa qua thời gian chờ khách trễ")
+                throw IllegalStateException("Ch\u01B0a qua th\u1EDDi gian ch\u1EDD kh\u00E1ch tr\u1EC5")
             }
             transaction.update(
                 ref,
@@ -639,9 +744,9 @@ private fun ConsultantHeader(userName: String, onLogout: () -> Unit) {
             }
             Spacer(Modifier.width(12.dp))
             Column {
-                Text("Xin chào,", color = Color.White.copy(0.78f), fontSize = 12.sp)
+                Text("Xin ch\u00E0o,", color = Color.White.copy(0.78f), fontSize = 12.sp)
                 Text(userName, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("Tư vấn viên spa", color = Color.White.copy(0.72f), fontSize = 11.sp)
+                Text("T\u01B0 v\u1EA5n vi\u00EAn spa", color = Color.White.copy(0.72f), fontSize = 11.sp)
             }
         }
         Box(
@@ -656,6 +761,7 @@ private fun ConsultantHeader(userName: String, onLogout: () -> Unit) {
 @Composable
 private fun ConsultantAppointmentCard(
     appointment: SpaAppointment,
+    packageImageUrl: String,
     showConfirm: Boolean,
     onOpenDetail: () -> Unit,
     onConfirm: () -> Unit,
@@ -667,26 +773,69 @@ private fun ConsultantAppointmentCard(
     val meta = appointmentStatusMeta(appointment.status)
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onOpenDetail() },
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(2.dp)
+        border = BorderStroke(1.dp, Color(0xFFE4F3EF)),
+        elevation = CardDefaults.cardElevation(3.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(appointment.spaPackageName, color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(4.dp))
-                    Text("${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}", color = Color(0xFF5A8A80), fontSize = 13.sp)
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 86.dp, height = 96.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xFFEAF9F5)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (packageImageUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = packageImageUrl,
+                            contentDescription = "Ảnh gói ${appointment.spaPackageName}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(Icons.Default.Spa, contentDescription = null, tint = MintGreen, modifier = Modifier.size(30.dp))
+                    }
                 }
-                StatusPill(status = appointment.status, label = meta.label)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            appointment.spaPackageName,
+                            color = Color(0xFF173F37),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            lineHeight = 19.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        StatusPill(status = appointment.status, label = meta.label)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    InfoLine(Icons.Default.EventAvailable, "${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}")
+                    InfoLine(Icons.Default.Person, appointment.userName.ifBlank { appointment.userEmail.ifBlank { "Khách hàng" } })
+                    InfoLine(Icons.Default.Schedule, "${appointment.durationMinutes} phút")
+                }
             }
-            Spacer(Modifier.height(10.dp))
-            InfoLine(Icons.Default.Person, appointment.userName.ifBlank { appointment.userEmail.ifBlank { "Khách hàng" } })
-            InfoLine(Icons.Default.Schedule, "${appointment.durationMinutes} phút")
             if (appointment.phoneNumber.isNotBlank()) InfoLine(Icons.Default.CheckCircle, appointment.phoneNumber)
             if (appointment.note.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text(appointment.note, color = Color(0xFF4A7A70), fontSize = 13.sp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFFFFF7FB))
+                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                ) {
+                    Text(appointment.note, color = Color(0xFF6C5B66), fontSize = 12.sp, lineHeight = 17.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
             }
             Spacer(Modifier.height(12.dp))
             when {
@@ -698,7 +847,7 @@ private fun ConsultantAppointmentCard(
                 ) {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Nhận lịch", fontWeight = FontWeight.Bold)
+                    Text("Nh\u1EADn l\u1ECBch", fontWeight = FontWeight.Bold)
                 }
                 appointment.status in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED) -> Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -710,7 +859,7 @@ private fun ConsultantAppointmentCard(
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE8A44A))
                     ) {
-                        Text("Không đến", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text("Kh\u00F4ng \u0111\u1EBFn", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                     }
                     Button(
                         onClick = onCheckIn,
@@ -727,7 +876,7 @@ private fun ConsultantAppointmentCard(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
                 ) {
-                    Text("Bắt đầu dịch vụ", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    Text("B\u1EAFt \u0111\u1EA7u d\u1ECBch v\u1EE5", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 }
                 appointment.status == AppointmentStatus.IN_SERVICE -> Button(
                     onClick = onComplete,
@@ -735,7 +884,7 @@ private fun ConsultantAppointmentCard(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
                 ) {
-                    Text("Hoàn thành", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    Text("Ho\u00E0n th\u00E0nh", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 }
             }
             if (!showConfirm) {
@@ -743,7 +892,7 @@ private fun ConsultantAppointmentCard(
                 TextButton(onClick = onOpenDetail, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.EventAvailable, contentDescription = null, tint = MintGreen, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Mở chi tiết / chat / liệu trình", color = MintGreen, fontWeight = FontWeight.SemiBold)
+                    Text("M\u1EDF b\u1EA3ng v\u1EADn h\u00E0nh", color = MintGreen, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -774,12 +923,12 @@ private fun AccessDenied(onLogout: () -> Unit, modifier: Modifier = Modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
             Icon(Icons.Default.Spa, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(58.dp))
             Spacer(Modifier.height(10.dp))
-            Text("Không có quyền tư vấn viên", color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Kh\u00F4ng c\u00F3 quy\u1EC1n t\u01B0 v\u1EA5n vi\u00EAn", color = Color(0xFF1A4A40), fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
-            Text("Tài khoản này chưa được gán vai trò tư vấn viên.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+            Text("T\u00E0i kho\u1EA3n n\u00E0y ch\u01B0a \u0111\u01B0\u1EE3c g\u00E1n vai tr\u00F2 t\u01B0 v\u1EA5n vi\u00EAn.", color = Color(0xFF8ACABA), fontSize = 13.sp)
             Spacer(Modifier.height(16.dp))
             Button(onClick = onLogout, colors = ButtonDefaults.buttonColors(containerColor = MintGreen), shape = RoundedCornerShape(14.dp)) {
-                Text("Đăng xuất")
+                Text("\u0110\u0103ng xu\u1EA5t")
             }
         }
     }
