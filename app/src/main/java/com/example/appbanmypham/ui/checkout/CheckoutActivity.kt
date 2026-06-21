@@ -437,6 +437,30 @@ fun CheckoutScreen(
                                 AppDatabase.getInstance(context).orderDao().insert(entity)
                             }
 
+                            // ✅ TRỪ KHO cho từng sản phẩm trong đơn (dùng transaction để tránh bán âm
+                            //    khi nhiều người đặt mua cùng lúc). Vì admin đọc trực tiếp từ Firestore
+                            //    real-time, sửa đúng ở đây thì trang Quản lý sản phẩm (admin) cũng tự
+                            //    động giảm theo, không cần sửa gì thêm ở ManageProductActivity.
+                            orderItems.forEach { item ->
+                                val productRef = db.collection("products").document(item.productId)
+                                db.runTransaction { tr ->
+                                    val snap = tr.get(productRef)
+                                    val currentStock = (snap.getLong("stock") ?: 0L).toInt()
+                                    val newStock = (currentStock - item.quantity).coerceAtLeast(0)
+                                    tr.update(productRef, "stock", newStock)
+                                    newStock
+                                }.addOnSuccessListener { newStock ->
+                                    // Đồng bộ Room để admin/màn sản phẩm vẫn đúng dữ liệu khi offline
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        AppDatabase.getInstance(context).productDao()
+                                            .updateStock(item.productId, newStock)
+                                    }
+                                }.addOnFailureListener {
+                                    // Không chặn luồng đặt hàng nếu trừ kho lỗi (đơn đã tạo thành công),
+                                    // nhưng nên log lại để theo dõi.
+                                }
+                            }
+
                             isLoading = false
                             showSuccess = true
                         }

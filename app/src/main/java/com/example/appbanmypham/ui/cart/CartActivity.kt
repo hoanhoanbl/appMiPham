@@ -42,7 +42,7 @@ class CartActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = BackgroundPrimary) {
                     CartScreen(
                         onBack = { finish() },
-                        onCheckout = { items, totalPrice ->  // ✅ Fix: truyền items & total
+                        onCheckout = { items, totalPrice ->  // ✅ truyền items & total
                             val intent = Intent(this, CheckoutActivity::class.java).apply {
                                 putExtra("total_price",     totalPrice)
                                 putExtra("item_ids",        items.map { it.productId }.toTypedArray())
@@ -67,28 +67,39 @@ data class CartItem(
     val price: Double = 0.0,
     val imageUrl: String = "",
     val brandName: String = "",
-    var quantity: Int = 1
+    var quantity: Int = 1,
+    val stock: Int = 0,                    // ✅ Tồn kho thực tế, đồng bộ realtime từ "products"
+    val isProductHidden: Boolean = false   // ✅ Sản phẩm đang bị ẩn ở admin
 )
 
 @Composable
 fun CartScreen(
     onBack: () -> Unit = {},
-    onCheckout: (List<CartItem>, Double) -> Unit = { _, _ -> }  // ✅ Fix: thêm params
+    onCheckout: (List<CartItem>, Double) -> Unit = { _, _ -> }  // ✅ thêm params
 ) {
     val context = LocalContext.current
     val db      = remember { FirebaseFirestore.getInstance() }
     val auth    = remember { FirebaseAuth.getInstance() }
     val uid     = auth.currentUser?.uid ?: ""
 
-    var items            by remember { mutableStateOf(listOf<CartItem>()) }
+    // Giỏ hàng "thô" lấy trực tiếp từ Firestore (chỉ có quantity người dùng chọn)
+    var cartRaw   by remember { mutableStateOf(listOf<CartItem>()) }
+    // Tồn kho thực tế của từng sản phẩm, lấy realtime từ collection "products"
+    var stockMap  by remember { mutableStateOf(mapOf<String, Int>()) }
+    var hiddenMap by remember { mutableStateOf(mapOf<String, Boolean>()) }
+
     var isLoading        by remember { mutableStateOf(true) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var stockWarning      by remember { mutableStateOf<String?>(null) }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // ── Lắng nghe giỏ hàng ─────────────────────────────────────────────
     LaunchedEffect(uid) {
         if (uid.isEmpty()) { isLoading = false; return@LaunchedEffect }
         db.collection("carts").document(uid).collection("items")
             .addSnapshotListener { snap, _ ->
-                items = snap?.documents?.map { doc ->
+                cartRaw = snap?.documents?.map { doc ->
                     CartItem(
                         productId = doc.getString("productId") ?: doc.id,
                         name      = doc.getString("name")      ?: "",
@@ -102,13 +113,79 @@ fun CartScreen(
             }
     }
 
+    // ── Lắng nghe tồn kho thực tế (để bắt kịp khi admin sửa/đơn khác trừ kho) ──
+    LaunchedEffect(Unit) {
+        db.collection("products").addSnapshotListener { snap, _ ->
+            val sMap = mutableMapOf<String, Int>()
+            val hMap = mutableMapOf<String, Boolean>()
+            snap?.documents?.forEach { doc ->
+                sMap[doc.id] = (doc.getLong("stock") ?: 0L).toInt()
+                hMap[doc.id] = doc.getBoolean("isHidden") ?: false
+            }
+            stockMap = sMap
+            hiddenMap = hMap
+        }
+    }
+
+    // Giỏ hàng hiển thị = giỏ gốc + tồn kho thực tế ghép vào
+    val items = remember(cartRaw, stockMap, hiddenMap) {
+        cartRaw.map { item ->
+            item.copy(
+                stock = stockMap[item.productId] ?: item.stock,
+                isProductHidden = hiddenMap[item.productId] ?: false
+            )
+        }
+    }
+
+    // ── Tự động đồng bộ giỏ hàng theo tồn kho thực tế ───────────────────
+    // - Hết hàng (stock = 0) → xoá khỏi giỏ
+    // - Tồn kho ít hơn số lượng đang chọn → tự giảm về đúng tồn kho
+    LaunchedEffect(cartRaw, stockMap) {
+        if (uid.isEmpty() || stockMap.isEmpty()) return@LaunchedEffect
+        cartRaw.forEach { raw ->
+            val liveStock = stockMap[raw.productId] ?: return@forEach
+            val ref = db.collection("carts").document(uid).collection("items").document(raw.productId)
+            when {
+                liveStock <= 0 -> {
+                    ref.delete()
+                    stockWarning = "\"${raw.name}\" đã hết hàng nên đã được xoá khỏi giỏ hàng"
+                }
+                raw.quantity > liveStock -> {
+                    ref.update("quantity", liveStock)
+                    stockWarning = "Số lượng \"${raw.name}\" chỉ còn $liveStock, đã tự điều chỉnh lại"
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(stockWarning) {
+        stockWarning?.let {
+            snackbarHostState.showSnackbar(it)
+            stockWarning = null
+        }
+    }
+
     val totalPrice = items.sumOf { it.price * it.quantity }
     val totalItems = items.sumOf { it.quantity }
+    val hasStockIssue = items.any { it.stock <= 0 || it.quantity > it.stock }
 
     fun updateQty(item: CartItem, delta: Int) {
-        val newQty = item.quantity + delta
         val ref = db.collection("carts").document(uid)
             .collection("items").document(item.productId)
+
+        if (delta > 0) {
+            // ✅ Chặn tăng số lượng nếu hết hàng hoặc đã đạt tối đa tồn kho
+            if (item.stock <= 0) {
+                stockWarning = "\"${item.name}\" đã hết hàng"
+                return
+            }
+            if (item.quantity >= item.stock) {
+                stockWarning = "Chỉ còn ${item.stock} sản phẩm \"${item.name}\" trong kho"
+                return
+            }
+        }
+
+        val newQty = item.quantity + delta
         if (newQty <= 0) ref.delete() else ref.update("quantity", newQty)
     }
 
@@ -121,12 +198,20 @@ fun CartScreen(
 
     Scaffold(
         containerColor = BackgroundPrimary,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (items.isNotEmpty()) {
                 CheckoutBar(
                     totalPrice = totalPrice,
                     totalItems = totalItems,
-                    onCheckout = { onCheckout(items, totalPrice) }  // ✅ Fix: truyền đúng data
+                    enabled    = !hasStockIssue,  // ✅ khoá nút đặt hàng nếu còn lỗi tồn kho
+                    onCheckout = {
+                        if (hasStockIssue) {
+                            stockWarning = "Vui lòng kiểm tra lại giỏ hàng, có sản phẩm vượt quá tồn kho"
+                        } else {
+                            onCheckout(items, totalPrice)
+                        }
+                    }
                 )
             }
         }
@@ -258,6 +343,9 @@ private fun CartItemCard(
 ) {
     var showRemoveConfirm by remember { mutableStateOf(false) }
 
+    val outOfStock = item.stock <= 0
+    val atMaxStock = !outOfStock && item.quantity >= item.stock
+
     Card(
         modifier  = Modifier.fillMaxWidth(),
         shape     = RoundedCornerShape(18.dp),
@@ -305,6 +393,27 @@ private fun CartItemCard(
                     }
                 }
 
+                // ✅ Cảnh báo hết hàng / đạt tối đa tồn kho
+                if (outOfStock) {
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFFFECEC))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text("Hết hàng", color = Color(0xFFE57373), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else if (atMaxStock) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Chỉ còn ${item.stock} sản phẩm trong kho",
+                        color = Color(0xFFE8A44A),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
                 Spacer(Modifier.height(8.dp))
 
                 Row(
@@ -337,11 +446,19 @@ private fun CartItemCard(
                             color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp,
                             modifier = Modifier.padding(horizontal = 10.dp)
                         )
+                        // ✅ Nút tăng số lượng: khoá khi hết hàng hoặc đã đạt tối đa tồn kho
                         Box(
-                            modifier = Modifier.size(32.dp).clickable { onIncrease() },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clickable(enabled = !outOfStock && !atMaxStock) { onIncrease() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, tint = MintGreen, modifier = Modifier.size(16.dp))
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                tint = if (outOfStock || atMaxStock) Color(0xFFCCE8DF) else MintGreen,
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
                 }
@@ -425,6 +542,7 @@ private fun PriceSummaryCard(items: List<CartItem>, totalPrice: Double) {
 private fun CheckoutBar(
     totalPrice: Double,
     totalItems: Int,
+    enabled: Boolean = true,
     onCheckout: () -> Unit
 ) {
     Box(
@@ -446,8 +564,13 @@ private fun CheckoutBar(
                 modifier = Modifier
                     .height(48.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(brush = AppGradients.mintHorizontal)
-                    .clickable { onCheckout() }
+                    .background(
+                        brush = if (enabled) AppGradients.mintHorizontal
+                        else androidx.compose.ui.graphics.Brush.horizontalGradient(
+                            listOf(Color(0xFFCCE8DF), Color(0xFFCCE8DF))
+                        )
+                    )
+                    .clickable(enabled = true) { onCheckout() }  // luôn cho click để hiện cảnh báo nếu có lỗi
                     .padding(horizontal = 28.dp),
                 contentAlignment = Alignment.Center
             ) {
