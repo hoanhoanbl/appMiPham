@@ -281,15 +281,66 @@ fun OrderScreen(onBack: () -> Unit = {}) {
             .addOnSuccessListener { snackMsg = "📦 Đã gửi yêu cầu trả hàng" }
             .addOnFailureListener { snackMsg = "❌ Gửi yêu cầu thất bại" }
     }
+
+    // ✅ Hủy đơn hàng + HOÀN LẠI TỒN KHO cho từng sản phẩm trong đơn.
+    // Dùng Firestore Transaction để:
+    //  (1) Đọc trạng thái đơn ngay tại thời điểm hủy — nếu đơn đã "cancelled" rồi thì bỏ qua,
+    //      tránh trường hợp bấm hủy 2 lần làm cộng tồn kho 2 lần.
+    //  (2) Cộng lại đúng số lượng đã đặt vào "stock" của từng sản phẩm và đổi status
+    //      cùng lúc, đảm bảo tính nguyên tử (atomic), an toàn khi có nhiều thao tác đồng thời.
+    fun cancelOrderAndRestoreStock(order: OrderEntity) {
+        val items = parseOrderItems(order.itemsJson)
+        val neededByProduct: Map<String, Int> = items
+            .groupBy { it.productId }
+            .mapValues { (_, list) -> list.sumOf { it.quantity } }
+
+        val orderRef = db.collection("orders").document(order.id)
+
+        db.runTransaction { transaction ->
+            val orderSnap = transaction.get(orderRef)
+            val currentStatus = orderSnap.getString("status") ?: ""
+
+            // Đơn đã bị hủy từ trước (vd bấm hủy 2 lần liên tiếp) -> không cộng kho lại nữa
+            if (currentStatus == "cancelled") {
+                return@runTransaction null
+            }
+
+            // Đọc tồn kho hiện tại của từng sản phẩm có trong đơn
+            val productRefs = neededByProduct.keys.associateWith { productId ->
+                db.collection("products").document(productId)
+            }
+            val currentStocks = productRefs.mapValues { (_, ref) ->
+                transaction.get(ref).getLong("stock") ?: 0L
+            }
+
+            // Cộng lại đúng số lượng đã đặt vào tồn kho từng sản phẩm
+            neededByProduct.forEach { (productId, qty) ->
+                val ref = productRefs[productId] ?: return@forEach
+                val newStock = (currentStocks[productId] ?: 0L) + qty
+                transaction.update(ref, "stock", newStock)
+            }
+
+            // Cập nhật trạng thái đơn hàng sang "cancelled"
+            transaction.update(orderRef, "status", "cancelled")
+
+            null
+        }
+            .addOnSuccessListener {
+                CoroutineScope(Dispatchers.IO).launch { orderDao.updateStatus(order.id, "cancelled") }
+                snackMsg = "❌ Đã hủy đơn hàng #${order.id.take(8).uppercase()} và hoàn lại tồn kho"
+            }
+            .addOnFailureListener {
+                snackMsg = "Hủy đơn thất bại: ${it.message}"
+            }
+    }
+
     cancelTarget?.let { order ->
         CancelOrderDialog(
             order     = order,
             onDismiss = { cancelTarget = null },
             onConfirm = {
-                db.collection("orders").document(order.id).update("status", "cancelled")
-                CoroutineScope(Dispatchers.IO).launch { orderDao.updateStatus(order.id, "cancelled") }
+                cancelOrderAndRestoreStock(order)
                 cancelTarget = null
-                snackMsg = "❌ Đã hủy đơn hàng #${order.id.take(8).uppercase()}"
             }
         )
     }
