@@ -33,8 +33,8 @@ data class ProgressPhotoTypeMeta(
 )
 
 val PROGRESS_PHOTO_TYPES = listOf(
-    ProgressPhotoTypeMeta(ProgressPhotoType.BEFORE, "Truoc buoi"),
-    ProgressPhotoTypeMeta(ProgressPhotoType.AFTER, "Sau buoi")
+    ProgressPhotoTypeMeta(ProgressPhotoType.BEFORE, "Trước buổi"),
+    ProgressPhotoTypeMeta(ProgressPhotoType.AFTER, "Sau buổi")
 )
 
 fun progressPhotoTypeMeta(type: String): ProgressPhotoTypeMeta =

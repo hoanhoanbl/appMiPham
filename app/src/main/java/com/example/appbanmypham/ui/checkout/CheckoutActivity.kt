@@ -43,6 +43,8 @@ import com.example.appbanmypham.ui.theme.AppBanMyPhamTheme
 import com.example.appbanmypham.ui.theme.AppGradients
 import com.example.appbanmypham.ui.theme.BackgroundPrimary
 import com.example.appbanmypham.ui.theme.MintGreen
+import com.example.appbanmypham.util.isValidPhone10
+import com.example.appbanmypham.util.normalizePhone10
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
@@ -124,6 +126,7 @@ fun CheckoutScreen(
     var isLoading by remember { mutableStateOf(false) }
     var showSuccess by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf("") }
+    val phoneError = phoneNumber.isNotBlank() && !isValidPhone10(phoneNumber)
 
     val paymentCode = remember {
         "DH" + UUID.randomUUID().toString().replace("-", "").take(10).uppercase()
@@ -142,7 +145,7 @@ fun CheckoutScreen(
                     Text("OK", fontSize = 32.sp, color = MintGreen, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Dat hang thanh cong!",
+                        "Đặt hàng thành công!",
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1A4A40),
                         fontSize = 18.sp
@@ -151,7 +154,7 @@ fun CheckoutScreen(
             },
             text = {
                 Text(
-                    "Don hang da duoc ghi nhan.\nChung toi se lien he som nhat!",
+                    "Đơn hàng đã được ghi nhận.\nChúng tôi sẽ liên hệ sớm nhất!",
                     color = Color(0xFF5A8A80),
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
@@ -165,7 +168,7 @@ fun CheckoutScreen(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Ve trang chu", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Về trang chủ", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -185,7 +188,7 @@ fun CheckoutScreen(
                     Icon(Icons.Default.ArrowBack, null, tint = Color.White)
                 }
                 Text(
-                    "Xac nhan dat hang",
+                    "Xác nhận đặt hàng",
                     modifier = Modifier.align(Alignment.Center),
                     color = Color.White,
                     fontSize = 18.sp,
@@ -209,7 +212,7 @@ fun CheckoutScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Thong tin giao hang",
+                        "Thông tin giao hàng",
                         color = MintGreen,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
@@ -217,7 +220,7 @@ fun CheckoutScreen(
                     OutlinedTextField(
                         value = receiverName,
                         onValueChange = { receiverName = it },
-                        label = { Text("Ho va ten nguoi nhan") },
+                        label = { Text("Họ và tên người nhận") },
                         leadingIcon = { Icon(Icons.Default.Person, null, tint = MintGreen) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -225,18 +228,22 @@ fun CheckoutScreen(
                     )
                     OutlinedTextField(
                         value = phoneNumber,
-                        onValueChange = { phoneNumber = it },
-                        label = { Text("So dien thoai") },
+                        onValueChange = { phoneNumber = normalizePhone10(it) },
+                        label = { Text("Số điện thoại") },
                         leadingIcon = { Icon(Icons.Default.Phone, null, tint = MintGreen) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
+                        isError = phoneError,
+                        supportingText = {
+                            if (phoneError) Text("Số điện thoại phải đủ 10 số")
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         colors = mintTextFieldColors()
                     )
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
-                        label = { Text("Dia chi giao hang") },
+                        label = { Text("Địa chỉ giao hàng") },
                         leadingIcon = { Icon(Icons.Default.Place, null, tint = MintGreen) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
@@ -256,21 +263,21 @@ fun CheckoutScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        "Phuong thuc thanh toan",
+                        "Phương thức thanh toán",
                         color = MintGreen,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     PaymentOptionRow(
-                        title = "Thanh toan khi nhan hang (COD)",
-                        subtitle = "Tra tien mat khi nhan hang",
+                        title = "Thanh toán khi nhận hàng (COD)",
+                        subtitle = "Trả tiền mặt khi nhận hàng",
                         icon = Icons.Default.LocalShipping,
                         selected = paymentMethod == PAYMENT_COD,
                         onClick = { paymentMethod = PAYMENT_COD }
                     )
                     PaymentOptionRow(
-                        title = "Chuyen khoan QR MB Bank",
-                        subtitle = "Quet ma QR dung so tien hoa don",
+                        title = "Chuyển khoản QR MB Bank",
+                        subtitle = "Quét mã QR đúng số tiền hóa đơn",
                         icon = Icons.Default.QrCode2,
                         selected = paymentMethod == PAYMENT_VIETQR,
                         onClick = { paymentMethod = PAYMENT_VIETQR }
@@ -299,19 +306,19 @@ fun CheckoutScreen(
                             )
                             Text(VIETQR_ACCOUNT_NAME, color = Color(0xFF5A8A80), fontSize = 13.sp)
                             Text(
-                                "So tien: ${"%,.0f".format(totalPrice)}d",
+                                "Số tiền: ${"%,.0f".format(totalPrice)}đ",
                                 color = MintGreen,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
                             Text(
-                                "Noi dung CK: $paymentCode",
+                                "Nội dung CK: $paymentCode",
                                 color = Color(0xFF1A4A40),
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp
                             )
                             Text(
-                                "Sau khi chuyen khoan, bam xac nhan dat hang. Shop se doi chieu noi dung chuyen khoan truoc khi xu ly don.",
+                                "Sau khi chuyển khoản, bấm xác nhận đặt hàng. Shop sẽ đối chiếu nội dung chuyển khoản trước khi xử lý đơn.",
                                 color = Color(0xFF8ACABA),
                                 fontSize = 12.sp,
                                 textAlign = TextAlign.Center
@@ -327,7 +334,7 @@ fun CheckoutScreen(
                 elevation = CardDefaults.cardElevation(2.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Tom tat don hang", color = MintGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Tóm tắt đơn hàng", color = MintGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     orderItems.forEach { item ->
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(
@@ -337,7 +344,7 @@ fun CheckoutScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             Text(
-                                "${"%,.0f".format(item.price * item.quantity)}d",
+                                "${"%,.0f".format(item.price * item.quantity)}đ",
                                 color = Color(0xFF1A4A40),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium
@@ -346,9 +353,9 @@ fun CheckoutScreen(
                     }
                     HorizontalDivider(color = Color(0xFFEAF9F5))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Tong cong", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("Tổng cộng", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         Text(
-                            "${"%,.0f".format(totalPrice)}d",
+                            "${"%,.0f".format(totalPrice)}đ",
                             color = MintGreen,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp
@@ -364,15 +371,19 @@ fun CheckoutScreen(
             Button(
                 onClick = {
                     if (receiverName.isBlank()) {
-                        errorMsg = "Vui long nhap ten nguoi nhan"
+                        errorMsg = "Vui lòng nhập tên người nhận"
                         return@Button
                     }
                     if (phoneNumber.isBlank()) {
-                        errorMsg = "Vui long nhap so dien thoai"
+                        errorMsg = "Vui lòng nhập số điện thoại"
+                        return@Button
+                    }
+                    if (!isValidPhone10(phoneNumber)) {
+                        errorMsg = "Số điện thoại phải đủ 10 số"
                         return@Button
                     }
                     if (address.isBlank()) {
-                        errorMsg = "Vui long nhap dia chi giao hang"
+                        errorMsg = "Vui lòng nhập địa chỉ giao hàng"
                         return@Button
                     }
 
@@ -381,7 +392,7 @@ fun CheckoutScreen(
 
                     val uid = auth.currentUser?.uid ?: run {
                         isLoading = false
-                        errorMsg = "Vui long dang nhap de dat hang"
+                        errorMsg = "Vui lòng đăng nhập để đặt hàng"
                         return@Button
                     }
                     val orderId = UUID.randomUUID().toString()
@@ -466,7 +477,7 @@ fun CheckoutScreen(
                         }
                         .addOnFailureListener {
                             isLoading = false
-                            errorMsg = "Dat hang that bai: ${it.message}"
+                            errorMsg = "Đặt hàng thất bại: ${it.message}"
                         }
                 },
                 modifier = Modifier.fillMaxWidth().height(52.dp),

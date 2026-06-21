@@ -774,6 +774,14 @@ private fun AdminSpaTab(context: Context, stats: DashboardStats) {
         badgeRed = true,
         onClick = { context.startActivity(Intent(context, ManageSpaAppointmentActivity::class.java)) }
     )
+    Spacer(Modifier.height(12.dp))
+    DashboardCard(
+        title = "Suc chua va gio spa",
+        subtitle = "Cau hinh so khach song song, gio lam viec va ngay dong cua",
+        icon = Icons.Default.Settings,
+        gradient = Brush.horizontalGradient(listOf(Color(0xFF2E8A7A), Color(0xFF79D8C7))),
+        onClick = { context.startActivity(Intent(context, ManageSpaCapacityActivity::class.java)) }
+    )
     Spacer(Modifier.height(18.dp))
     DashboardCard(
         title = "Quan ly lieu trinh",

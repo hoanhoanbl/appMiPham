@@ -43,7 +43,14 @@ object TreatmentPlanStatus {
     const val ACTIVE = "active"
     const val COMPLETED = "completed"
     const val CANCELLED = "cancelled"
+
+    val openStatuses = setOf(DRAFT, WAITING_CONSULTANT, ACTIVE)
 }
+
+const val ACTIVE_TREATMENT_PLAN_KEYS_COLLECTION = "active_treatment_plan_keys"
+
+fun activeTreatmentPlanKey(userId: String, spaPackageId: String): String =
+    "${userId}_${spaPackageId}".replace("/", "_")
 
 data class TreatmentPlanStatusMeta(
     val key: String,
@@ -52,11 +59,11 @@ data class TreatmentPlanStatusMeta(
 )
 
 val TREATMENT_PLAN_STATUSES = listOf(
-    TreatmentPlanStatusMeta(TreatmentPlanStatus.DRAFT, "Ban nhap", "Ke hoach dang duoc tu van vien chuan bi"),
-    TreatmentPlanStatusMeta(TreatmentPlanStatus.WAITING_CONSULTANT, "Cho tu van vien", "Lieu trinh da tao tu goi spa va dang cho tu van vien nhan lich"),
-    TreatmentPlanStatusMeta(TreatmentPlanStatus.ACTIVE, "Dang dieu tri", "Lieu trinh dang dien ra"),
-    TreatmentPlanStatusMeta(TreatmentPlanStatus.COMPLETED, "Da hoan thanh", "Tat ca buoi can thiet da hoan thanh"),
-    TreatmentPlanStatusMeta(TreatmentPlanStatus.CANCELLED, "Da huy", "Lieu trinh da dung hoac huy")
+    TreatmentPlanStatusMeta(TreatmentPlanStatus.DRAFT, "Bản nháp", "Kế hoạch đang được tư vấn viên chuẩn bị"),
+    TreatmentPlanStatusMeta(TreatmentPlanStatus.WAITING_CONSULTANT, "Chờ tư vấn viên", "Liệu trình đã tạo từ gói spa và đang chờ tư vấn viên nhận lịch"),
+    TreatmentPlanStatusMeta(TreatmentPlanStatus.ACTIVE, "Đang điều trị", "Liệu trình đang diễn ra"),
+    TreatmentPlanStatusMeta(TreatmentPlanStatus.COMPLETED, "Đã hoàn thành", "Tất cả buổi cần thiết đã hoàn thành"),
+    TreatmentPlanStatusMeta(TreatmentPlanStatus.CANCELLED, "Đã hủy", "Liệu trình đã dừng hoặc hủy")
 )
 
 fun treatmentPlanStatusMeta(status: String): TreatmentPlanStatusMeta =

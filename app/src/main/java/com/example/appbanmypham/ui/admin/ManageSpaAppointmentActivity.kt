@@ -35,6 +35,7 @@ import com.example.appbanmypham.model.SPA_APPOINTMENT_STATUSES
 import com.example.appbanmypham.model.SpaAppointment
 import com.example.appbanmypham.model.appointmentStatusMeta
 import com.example.appbanmypham.model.firestoreDocToSpaAppointment
+import com.example.appbanmypham.model.releaseSpaCapacityForAppointment
 import com.example.appbanmypham.ui.theme.AppBanMyPhamTheme
 import com.example.appbanmypham.ui.theme.AppGradients
 import com.example.appbanmypham.ui.theme.BackgroundPrimary
@@ -42,6 +43,9 @@ import com.example.appbanmypham.ui.theme.MintGreen
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import java.util.Calendar
 
 class ManageSpaAppointmentActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,20 +61,32 @@ class ManageSpaAppointmentActivity : ComponentActivity() {
     }
 }
 
+private enum class AppointmentDateQuickFilter(val label: String) {
+    ALL("Tất cả ngày"),
+    TODAY("Hôm nay"),
+    UPCOMING("Sắp tới"),
+    PAST("Đã qua")
+}
+
 @Composable
 fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
     val db = remember { FirebaseFirestore.getInstance() }
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     var appointments by remember { mutableStateOf(listOf<SpaAppointment>()) }
     var isLoading by remember { mutableStateOf(true) }
     var filterStatus by remember { mutableStateOf<String?>(null) }
+    var dateFilter by remember { mutableStateOf(AppointmentDateQuickFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var cancelTarget by remember { mutableStateOf<SpaAppointment?>(null) }
     var reassignTarget by remember { mutableStateOf<SpaAppointment?>(null) }
     var newConsultantId by remember { mutableStateOf("") }
     var newConsultantEmail by remember { mutableStateOf("") }
     var newConsultantName by remember { mutableStateOf("") }
+    var assignedRoomName by remember { mutableStateOf("") }
+    var assignedSpecialistName by remember { mutableStateOf("") }
+    var internalStaffNote by remember { mutableStateOf("") }
     var snackMsg by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(snackMsg) {
@@ -94,12 +110,13 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
 
     val filtered = appointments.filter { appointment ->
         val matchStatus = filterStatus == null || appointment.status == filterStatus
+        val matchDate = matchesDateFilter(appointment.startAt, dateFilter)
         val matchSearch = searchQuery.isBlank() ||
                 appointment.spaPackageName.contains(searchQuery, ignoreCase = true) ||
                 appointment.userEmail.contains(searchQuery, ignoreCase = true) ||
                 appointment.userName.contains(searchQuery, ignoreCase = true) ||
                 appointment.phoneNumber.contains(searchQuery, ignoreCase = true)
-        matchStatus && matchSearch
+        matchStatus && matchDate && matchSearch
     }
 
     Scaffold(containerColor = BackgroundPrimary, snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
@@ -118,9 +135,9 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                     Icon(Icons.Default.ArrowBack, contentDescription = null, tint = Color.White)
                 }
                 Column(modifier = Modifier.align(Alignment.BottomStart).padding(top = 48.dp)) {
-                    Text("QUAN LY", color = Color.White.copy(0.75f), fontSize = 11.sp, letterSpacing = 2.sp)
-                    Text("Lich hen spa", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Text("${appointments.size} lich - ${appointments.count { it.status == AppointmentStatus.PENDING }} dang cho", color = Color.White.copy(0.8f), fontSize = 12.sp)
+                    Text("QUẢN LÝ", color = Color.White.copy(0.75f), fontSize = 11.sp, letterSpacing = 2.sp)
+                    Text("Lịch hẹn spa", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("${appointments.size} lịch - ${appointments.count { it.status == AppointmentStatus.PENDING }} đang chờ", color = Color.White.copy(0.8f), fontSize = 12.sp)
                 }
             }
 
@@ -139,11 +156,22 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                     }
                 }
                 Spacer(Modifier.height(10.dp))
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(AppointmentDateQuickFilter.values()) { option ->
+                        FilterChip(
+                            option.label,
+                            appointments.count { matchesDateFilter(it.startAt, option) },
+                            dateFilter == option,
+                            MintGreen
+                        ) { dateFilter = option }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    placeholder = { Text("Tim khach, SDT, goi spa...", color = Color(0xFFAAD8CE)) },
+                    placeholder = { Text("Tìm khách, SĐT, gói spa...", color = Color(0xFFAAD8CE)) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MintGreen) },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
@@ -165,7 +193,7 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.EventAvailable, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(54.dp))
                             Spacer(Modifier.height(8.dp))
-                            Text("Khong co lich hen phu hop", color = Color(0xFF8ACABA), fontSize = 15.sp)
+                            Text("Không có lịch hẹn phù hợp", color = Color(0xFF8ACABA), fontSize = 15.sp)
                         }
                     }
                     else -> LazyColumn(
@@ -181,6 +209,9 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                                     newConsultantId = appointment.consultantId
                                     newConsultantEmail = appointment.consultantEmail
                                     newConsultantName = appointment.consultantName
+                                    assignedRoomName = appointment.assignedRoomName
+                                    assignedSpecialistName = appointment.assignedSpecialistName
+                                    internalStaffNote = appointment.internalStaffNote
                                 },
                                 onCancel = { cancelTarget = appointment }
                             )
@@ -197,28 +228,36 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
             onDismissRequest = { cancelTarget = null },
             containerColor = Color.White,
             shape = RoundedCornerShape(20.dp),
-            title = { Text("Huy lich hen?", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
-            text = { Text("Lich ${appointment.spaPackageName} se duoc chuyen sang trang thai da huy.", color = Color(0xFF5A8A80)) },
+            title = { Text("Hủy lịch hẹn?", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
+            text = { Text("Lịch ${appointment.spaPackageName} sẽ được chuyển sang trạng thái đã hủy.", color = Color(0xFF5A8A80)) },
             confirmButton = {
                 Button(
                     onClick = {
                         val now = System.currentTimeMillis()
-                        db.collection("appointments").document(appointment.id).update(
-                            mapOf(
-                                "status" to AppointmentStatus.CANCELLED,
-                                "cancelledAt" to now,
-                                "updatedAt" to now,
-                                "cancelReason" to "Admin cancelled"
-                            )
-                        ).addOnSuccessListener { snackMsg = "Da huy lich hen" }
-                            .addOnFailureListener { snackMsg = "Huy lich that bai" }
+                        val updates = mapOf(
+                            "status" to AppointmentStatus.CANCELLED,
+                            "cancelledAt" to now,
+                            "cancelReason" to "Admin cancelled"
+                        )
+                        scope.launch {
+                            val result = runCatching {
+                                if (appointment.startAt > now && appointment.reservedBlockKeys.isNotEmpty()) {
+                                    releaseSpaCapacityForAppointment(db, appointment, updates)
+                                } else {
+                                    db.collection("appointments").document(appointment.id)
+                                        .update(updates + mapOf("updatedAt" to now))
+                                        .await()
+                                }
+                            }
+                            snackMsg = if (result.isSuccess) "Đã hủy lịch hẹn" else "Hủy lịch thất bại"
+                        }
                         cancelTarget = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
-                ) { Text("Huy lich", color = Color.White) }
+                ) { Text("Hủy lịch", color = Color.White) }
             },
             dismissButton = {
-                TextButton(onClick = { cancelTarget = null }) { Text("Dong", color = MintGreen) }
+                TextButton(onClick = { cancelTarget = null }) { Text("Đóng", color = MintGreen) }
             }
         )
     }
@@ -228,13 +267,13 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
             onDismissRequest = { reassignTarget = null },
             containerColor = Color.White,
             shape = RoundedCornerShape(20.dp),
-            title = { Text("Doi tu van vien", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
+            title = { Text("Đổi người phụ trách", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = newConsultantId,
                         onValueChange = { newConsultantId = it },
-                        label = { Text("Consultant ID") },
+                        label = { Text("Mã tư vấn viên") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = adminFieldColors()
@@ -250,8 +289,32 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                     OutlinedTextField(
                         value = newConsultantName,
                         onValueChange = { newConsultantName = it },
-                        label = { Text("Ten hien thi") },
+                        label = { Text("Tên hiển thị") },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = adminFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = assignedRoomName,
+                        onValueChange = { assignedRoomName = it },
+                        label = { Text("Phòng/giường") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = adminFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = assignedSpecialistName,
+                        onValueChange = { assignedSpecialistName = it },
+                        label = { Text("Chuyên viên dịch vụ") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = adminFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = internalStaffNote,
+                        onValueChange = { internalStaffNote = it },
+                        label = { Text("Ghi chú nội bộ") },
+                        minLines = 2,
                         shape = RoundedCornerShape(12.dp),
                         colors = adminFieldColors()
                     )
@@ -267,6 +330,9 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                             "consultantId" to newConsultantId.trim(),
                             "consultantEmail" to newConsultantEmail.trim(),
                             "consultantName" to newConsultantName.trim(),
+                            "assignedRoomName" to assignedRoomName.trim(),
+                            "assignedSpecialistName" to assignedSpecialistName.trim(),
+                            "internalStaffNote" to internalStaffNote.trim(),
                             "updatedAt" to now
                         )
                         db.collection("appointments").document(appointment.id).update(updates)
@@ -285,17 +351,17 @@ fun ManageSpaAppointmentScreen(onBack: () -> Unit = {}) {
                                     ),
                                     SetOptions.merge()
                                 )
-                                snackMsg = "Da doi tu van vien"
+                                snackMsg = "Đã cập nhật người phụ trách"
                             }
-                            .addOnFailureListener { snackMsg = "Doi tu van vien that bai" }
+                            .addOnFailureListener { snackMsg = "Cập nhật người phụ trách thất bại" }
                         reassignTarget = null
                     },
                     enabled = newConsultantId.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
-                ) { Text("Luu") }
+                ) { Text("Lưu") }
             },
             dismissButton = {
-                TextButton(onClick = { reassignTarget = null }) { Text("Huy", color = MintGreen) }
+                TextButton(onClick = { reassignTarget = null }) { Text("Hủy", color = MintGreen) }
             }
         )
     }
@@ -330,17 +396,35 @@ private fun AdminSpaAppointmentCard(appointment: SpaAppointment, onReassign: () 
                 }
             }
             Spacer(Modifier.height(10.dp))
-            AdminInfoLine(Icons.Default.Person, appointment.userName.ifBlank { appointment.userEmail.ifBlank { "Khach hang" } })
+            AdminInfoLine(Icons.Default.Person, appointment.userName.ifBlank { appointment.userEmail.ifBlank { "Khách hàng" } })
             AdminInfoLine(Icons.Default.Phone, appointment.phoneNumber.ifBlank { "-" })
-            AdminInfoLine(Icons.Default.Spa, "${"%,.0f".format(appointment.spaPackagePrice)}d - ${appointment.durationMinutes} phut")
+            AdminInfoLine(Icons.Default.Spa, "${"%,.0f".format(appointment.spaPackagePrice)}đ - ${appointment.durationMinutes} phút")
+            AdminInfoLine(
+                Icons.Default.EventAvailable,
+                if (appointment.reservedBlockKeys.isEmpty()) {
+                    "Sức chứa: lịch cũ chưa có block"
+                } else {
+                    "Sức chứa: ${appointment.reservedBlockKeys.size} khung, ${appointment.capacityUnits} suất"
+                }
+            )
             if (appointment.consultantId.isNotBlank()) {
-                AdminInfoLine(Icons.Default.EventAvailable, "Tu van: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}")
+                AdminInfoLine(Icons.Default.EventAvailable, "Tư vấn: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}")
+            }
+            if (appointment.assignedRoomName.isNotBlank() || appointment.assignedSpecialistName.isNotBlank()) {
+                AdminInfoLine(
+                    Icons.Default.Spa,
+                    listOf(appointment.assignedRoomName, appointment.assignedSpecialistName).filter { it.isNotBlank() }.joinToString(" - ")
+                )
             }
             if (appointment.note.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text("Ghi chu: ${appointment.note}", color = Color(0xFF4A7A70), fontSize = 13.sp)
+                Text("Ghi chú: ${appointment.note}", color = Color(0xFF4A7A70), fontSize = 13.sp)
             }
-            if (appointment.status != AppointmentStatus.CANCELLED && appointment.status != AppointmentStatus.COMPLETED) {
+            if (appointment.internalStaffNote.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text("Nội bộ: ${appointment.internalStaffNote}", color = Color(0xFF6C5A30), fontSize = 13.sp)
+            }
+            if (appointment.status !in AppointmentStatus.terminalStatuses) {
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
@@ -349,7 +433,7 @@ private fun AdminSpaAppointmentCard(appointment: SpaAppointment, onReassign: () 
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MintGreen)
                     ) {
-                        Text("Doi tu van", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Đổi phụ trách", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(
                         onClick = onCancel,
@@ -359,7 +443,7 @@ private fun AdminSpaAppointmentCard(appointment: SpaAppointment, onReassign: () 
                     ) {
                         Icon(Icons.Default.Cancel, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Huy lich", fontSize = 12.sp)
+                        Text("Hủy lịch", fontSize = 12.sp)
                     }
                 }
             }
@@ -389,6 +473,8 @@ private fun statusColor(status: String): Color = when (status) {
     AppointmentStatus.PENDING -> Color(0xFFE8A44A)
     AppointmentStatus.ASSIGNED -> Color(0xFF7B61D1)
     AppointmentStatus.CONFIRMED -> Color(0xFF4A90D9)
+    AppointmentStatus.CHECKED_IN -> Color(0xFF2E8A7A)
+    AppointmentStatus.IN_SERVICE -> Color(0xFF009688)
     AppointmentStatus.COMPLETED -> MintGreen
     AppointmentStatus.CANCELLED -> Color(0xFFE57373)
     AppointmentStatus.NO_SHOW -> Color(0xFFE8A44A)
@@ -400,9 +486,31 @@ private fun statusBg(status: String): Color = when (status) {
     AppointmentStatus.PENDING -> Color(0xFFFFF3E0)
     AppointmentStatus.ASSIGNED -> Color(0xFFF0ECFF)
     AppointmentStatus.CONFIRMED -> Color(0xFFE8F0FB)
+    AppointmentStatus.CHECKED_IN -> Color(0xFFEAF9F5)
+    AppointmentStatus.IN_SERVICE -> Color(0xFFE0F2F1)
     AppointmentStatus.COMPLETED -> Color(0xFFEAF9F5)
     AppointmentStatus.CANCELLED -> Color(0xFFFFECEC)
     AppointmentStatus.NO_SHOW -> Color(0xFFFFF3E0)
     AppointmentStatus.RESCHEDULED -> Color(0xFFE8F0FB)
     else -> Color(0xFFF5F5F5)
 }
+
+private fun matchesDateFilter(startAt: Long, filter: AppointmentDateQuickFilter): Boolean {
+    if (filter == AppointmentDateQuickFilter.ALL || startAt <= 0L) return true
+    val startToday = startOfTodayMillis()
+    val endToday = startToday + 86_400_000L
+    return when (filter) {
+        AppointmentDateQuickFilter.ALL -> true
+        AppointmentDateQuickFilter.TODAY -> startAt in startToday until endToday
+        AppointmentDateQuickFilter.UPCOMING -> startAt >= endToday
+        AppointmentDateQuickFilter.PAST -> startAt < startToday
+    }
+}
+
+private fun startOfTodayMillis(): Long =
+    Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis

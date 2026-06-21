@@ -54,12 +54,12 @@ data class TreatmentSessionStatusMeta(
 )
 
 val TREATMENT_SESSION_STATUSES = listOf(
-    TreatmentSessionStatusMeta(TreatmentSessionStatus.UNSCHEDULED, "Cho dat lich", "Buoi dieu tri da co trong goi nhung chua chon ngay gio"),
-    TreatmentSessionStatusMeta(TreatmentSessionStatus.SCHEDULED, "Da len lich", "Buoi dieu tri dang cho thuc hien"),
-    TreatmentSessionStatusMeta(TreatmentSessionStatus.COMPLETED, "Hoan thanh", "Buoi dieu tri da hoan thanh"),
-    TreatmentSessionStatusMeta(TreatmentSessionStatus.CANCELLED, "Da huy", "Buoi dieu tri da huy"),
-    TreatmentSessionStatusMeta(TreatmentSessionStatus.NO_SHOW, "Khach khong den", "Khach vang mat, khong tru buoi trong MVP"),
-    TreatmentSessionStatusMeta(TreatmentSessionStatus.RESCHEDULED, "Da doi lich", "Buoi dieu tri da duoc hen lai")
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.UNSCHEDULED, "Chờ đặt lịch", "Buổi điều trị đã có trong gói nhưng chưa chọn ngày giờ"),
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.SCHEDULED, "Đã lên lịch", "Buổi điều trị đang chờ thực hiện"),
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.COMPLETED, "Hoàn thành", "Buổi điều trị đã hoàn thành"),
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.CANCELLED, "Đã hủy", "Buổi điều trị đã hủy"),
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.NO_SHOW, "Khách không đến", "Khách vắng mặt, không trừ buổi trong MVP"),
+    TreatmentSessionStatusMeta(TreatmentSessionStatus.RESCHEDULED, "Đã đổi lịch", "Buổi điều trị đã được hẹn lại")
 )
 
 fun treatmentSessionStatusMeta(status: String): TreatmentSessionStatusMeta =

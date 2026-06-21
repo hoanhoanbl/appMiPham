@@ -40,8 +40,8 @@ data class SpaPackageTypeMeta(
 )
 
 val SPA_PACKAGE_TYPES = listOf(
-    SpaPackageTypeMeta(SpaPackageType.SINGLE_SESSION, "Dich vu 1 buoi", "Khach dat lich va hoan thanh trong mot lan hen"),
-    SpaPackageTypeMeta(SpaPackageType.TREATMENT_TEMPLATE, "Goi lieu trinh", "Goi spa tron goi voi so buoi co dinh do admin thiet lap")
+    SpaPackageTypeMeta(SpaPackageType.SINGLE_SESSION, "Dịch vụ 1 buổi", "Khách đặt lịch và hoàn thành trong một lần hẹn"),
+    SpaPackageTypeMeta(SpaPackageType.TREATMENT_TEMPLATE, "Gói liệu trình", "Gói spa trọn gói với số buổi cố định do admin thiết lập")
 )
 
 fun spaPackageTypeMeta(type: String): SpaPackageTypeMeta =
@@ -61,9 +61,9 @@ data class ProgressPhotoPolicyMeta(
 )
 
 val PROGRESS_PHOTO_POLICIES = listOf(
-    ProgressPhotoPolicyMeta(ProgressPhotoPolicy.NONE, "Khong can anh", "Khong yeu cau anh tien trinh"),
-    ProgressPhotoPolicyMeta(ProgressPhotoPolicy.AFTER_EACH_SESSION, "Anh sau moi buoi", "Nhac tu van vien up anh sau buoi dieu tri"),
-    ProgressPhotoPolicyMeta(ProgressPhotoPolicy.BEFORE_AFTER_EACH_SESSION, "Anh truoc va sau", "Nhac up anh truoc va sau moi buoi")
+    ProgressPhotoPolicyMeta(ProgressPhotoPolicy.NONE, "Không cần ảnh", "Không yêu cầu ảnh tiến trình"),
+    ProgressPhotoPolicyMeta(ProgressPhotoPolicy.AFTER_EACH_SESSION, "Ảnh sau mỗi buổi", "Nhắc tư vấn viên up ảnh sau buổi điều trị"),
+    ProgressPhotoPolicyMeta(ProgressPhotoPolicy.BEFORE_AFTER_EACH_SESSION, "Ảnh trước và sau", "Nhắc up ảnh trước và sau mỗi buổi")
 )
 
 fun progressPhotoPolicyMeta(policy: String): ProgressPhotoPolicyMeta =

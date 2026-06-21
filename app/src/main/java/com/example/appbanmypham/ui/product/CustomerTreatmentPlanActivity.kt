@@ -38,21 +38,31 @@ import com.example.appbanmypham.model.ConsultationChatMessage
 import com.example.appbanmypham.model.ConsultationChatThread
 import com.example.appbanmypham.model.AppointmentStatus
 import com.example.appbanmypham.model.BookingDateOption
+import com.example.appbanmypham.model.FirestoreTransactionUpdate
 import com.example.appbanmypham.model.SPA_BOOKING_SLOTS
+import com.example.appbanmypham.model.SpaCapacitySnapshot
 import com.example.appbanmypham.model.SpaAppointment
+import com.example.appbanmypham.model.SpaSlotAvailability
 import com.example.appbanmypham.model.TreatmentPlan
 import com.example.appbanmypham.model.TreatmentProgressPhoto
 import com.example.appbanmypham.model.TreatmentSession
 import com.example.appbanmypham.model.TreatmentSessionStatus
 import com.example.appbanmypham.model.appointmentTimeRange
+import com.example.appbanmypham.model.buildSpaSlotAvailability
+import com.example.appbanmypham.model.capacityBlockKeys
+import com.example.appbanmypham.model.capacityBlockStartTimes
 import com.example.appbanmypham.model.firestoreDocToConsultationChatMessage
 import com.example.appbanmypham.model.firestoreDocToConsultationChatThread
 import com.example.appbanmypham.model.firestoreDocToTreatmentPlan
 import com.example.appbanmypham.model.firestoreDocToTreatmentProgressPhoto
 import com.example.appbanmypham.model.firestoreDocToTreatmentSession
+import com.example.appbanmypham.model.loadSpaCapacitySnapshot
 import com.example.appbanmypham.model.nextBookingDateOptions
 import com.example.appbanmypham.model.progressPhotoPolicyMeta
 import com.example.appbanmypham.model.progressPhotoTypeMeta
+import com.example.appbanmypham.model.reserveSpaCapacityAndWrite
+import com.example.appbanmypham.model.resolveEffectiveSpaCapacity
+import com.example.appbanmypham.model.spaDateKey
 import com.example.appbanmypham.model.toFirestoreMap
 import com.example.appbanmypham.model.treatmentPlanStatusMeta
 import com.example.appbanmypham.model.treatmentSessionStatusMeta
@@ -83,6 +93,12 @@ class CustomerTreatmentPlanActivity : ComponentActivity() {
     }
 }
 
+private enum class CustomerTreatmentTab(val label: String) {
+    OVERVIEW("Tổng quan"),
+    SESSIONS("Buổi"),
+    CHAT("Chat")
+}
+
 @Composable
 fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
     val db = remember { FirebaseFirestore.getInstance() }
@@ -99,8 +115,9 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
     var messageText by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(user != null) }
     var isSending by remember { mutableStateOf(false) }
-    var bookedSlotsByDate by remember { mutableStateOf<Map<Long, Set<String>>>(emptyMap()) }
+    var capacitySnapshot by remember { mutableStateOf<SpaCapacitySnapshot?>(null) }
     var scheduleTarget by remember { mutableStateOf<TreatmentSession?>(null) }
+    var selectedTab by remember { mutableStateOf(CustomerTreatmentTab.OVERVIEW) }
     val dateOptions = remember { nextBookingDateOptions(31) }
 
     val selectedPlan = plans.firstOrNull { it.id == selectedPlanId } ?: plans.firstOrNull()
@@ -126,27 +143,7 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
     }
 
     LaunchedEffect(Unit) {
-        val start = dateOptions.firstOrNull()?.startOfDayMillis ?: return@LaunchedEffect
-        val end = (dateOptions.lastOrNull()?.startOfDayMillis ?: start) + DAY_MILLIS
-        bookedSlotsByDate = withContext(Dispatchers.IO) {
-            db.collection("appointments")
-                .whereGreaterThanOrEqualTo("startAt", start)
-                .whereLessThan("startAt", end)
-                .get()
-                .await()
-                .documents
-                .mapNotNull { doc ->
-                    val status = doc.getString("status") ?: return@mapNotNull null
-                    if (!AppointmentStatus.activeStatuses.contains(status)) return@mapNotNull null
-                    val startAt = doc.getLong("startAt") ?: return@mapNotNull null
-                    val slot = doc.getString("timeSlotLabel") ?: return@mapNotNull null
-                    val date = dateOptions.firstOrNull { startAt >= it.startOfDayMillis && startAt < it.startOfDayMillis + DAY_MILLIS }
-                        ?: return@mapNotNull null
-                    date.startOfDayMillis to slot
-                }
-                .groupBy({ it.first }, { it.second })
-                .mapValues { it.value.toSet() }
-        }
+        capacitySnapshot = withContext(Dispatchers.IO) { loadSpaCapacitySnapshot(db, dateOptions) }
     }
 
     DisposableEffect(selectedPlan?.id) {
@@ -194,9 +191,9 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Header(onBack = onBack, count = plans.size)
             when {
-                user == null -> EmptyState("Vui long dang nhap de xem lieu trinh.", modifier = Modifier.fillMaxSize())
+                user == null -> EmptyState("Vui lòng đăng nhập để xem liệu trình.", modifier = Modifier.fillMaxSize())
                 isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = MintGreen) }
-                plans.isEmpty() -> EmptyState("Ban chua co lieu trinh nao.", modifier = Modifier.fillMaxSize())
+                plans.isEmpty() -> EmptyState("Bạn chưa có liệu trình nào.", modifier = Modifier.fillMaxSize())
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -218,79 +215,94 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
                     }
                     selectedPlan?.let { plan ->
                         item {
-                            SectionCard {
-                                SectionTitle(Icons.Default.Spa, "Tong quan lieu trinh")
-                                InfoText("Ten", plan.packageName)
-                                InfoText("Tu van", plan.consultantName.ifBlank { plan.consultantEmail })
-                                InfoText("Trang thai", treatmentPlanStatusMeta(plan.status).label)
-                                InfoText("Tien do", "${plan.completedSessionCount}/${plan.sessionCount} buoi")
-                                if (plan.consultationNote.isNotBlank()) InfoText("Ghi chu", plan.consultationNote)
-                                if (plan.recommendationNote.isNotBlank()) InfoText("De xuat", plan.recommendationNote)
-                                if (plan.requiresProgressPhotos) InfoText("Anh", progressPhotoPolicyMeta(plan.photoPolicy).label)
-                            }
-                        }
-                        item {
-                            SectionCard {
-                                SectionTitle(Icons.Default.EventAvailable, "Timeline buoi dieu tri")
-                                if (sessions.isEmpty()) {
-                                    Text("Lieu trinh dang duoc khoi tao tu goi spa.", color = Color(0xFF8ACABA), fontSize = 13.sp)
-                                } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        sessions.forEach { session ->
-                                            CustomerSessionCard(
-                                                plan = plan,
-                                                session = session,
-                                                photos = photos.filter { it.treatmentSessionId == session.id },
-                                                onSchedule = { scheduleTarget = session }
-                                            )
-                                        }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                CustomerTreatmentTab.values().forEach { tab ->
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(if (selectedTab == tab) MintGreen else Color.White)
+                                            .clickable { selectedTab = tab }
+                                            .padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(tab.label, color = if (selectedTab == tab) Color.White else MintGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         }
                         item {
-                            SectionCard {
-                                SectionTitle(Icons.Default.Chat, "Chat voi tu van vien")
-                                if (!canAccess || thread == null) {
-                                    Text("Chat se hien khi tu van vien da nhan lich.", color = Color(0xFF8ACABA), fontSize = 13.sp)
-                                } else {
-                                    ChatMessages(messages = messages, currentUserId = user.uid)
-                                    Spacer(Modifier.height(10.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        OutlinedTextField(
-                                            value = messageText,
-                                            onValueChange = { messageText = it },
-                                            modifier = Modifier.weight(1f),
-                                            placeholder = { Text("Nhap tin nhan...", color = Color(0xFFAAD8CE)) },
-                                            singleLine = true,
-                                            colors = fieldColors(),
-                                            shape = RoundedCornerShape(14.dp)
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        IconButton(
-                                            onClick = {
-                                                val text = messageText.trim()
-                                                if (text.isBlank()) return@IconButton
-                                                scope.launch {
-                                                    isSending = true
-                                                    val result = runCatching {
-                                                        sendCustomerMessage(
-                                                            db = db,
-                                                            plan = plan,
-                                                            threadId = thread!!.id,
-                                                            senderId = user.uid,
-                                                            senderName = user.displayName ?: user.email?.substringBefore("@") ?: "Khach hang",
-                                                            message = text
-                                                        )
+                            when (selectedTab) {
+                                CustomerTreatmentTab.OVERVIEW -> SectionCard {
+                                    SectionTitle(Icons.Default.Spa, "Tổng quan liệu trình")
+                                    InfoText("Tên", plan.packageName)
+                                    InfoText("Tư vấn", plan.consultantName.ifBlank { plan.consultantEmail })
+                                    InfoText("Trạng thái", treatmentPlanStatusMeta(plan.status).label)
+                                    InfoText("Tiến độ", "${plan.completedSessionCount}/${plan.sessionCount} buổi")
+                                    if (plan.consultationNote.isNotBlank()) InfoText("Ghi chú", plan.consultationNote)
+                                    if (plan.recommendationNote.isNotBlank()) InfoText("Đề xuất", plan.recommendationNote)
+                                    if (plan.requiresProgressPhotos) InfoText("Ảnh", progressPhotoPolicyMeta(plan.photoPolicy).label)
+                                }
+                                CustomerTreatmentTab.SESSIONS -> SectionCard {
+                                    SectionTitle(Icons.Default.EventAvailable, "Timeline buổi điều trị")
+                                    if (sessions.isEmpty()) {
+                                        Text("Liệu trình đang được khởi tạo từ gói spa.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            sessions.forEach { session ->
+                                                CustomerSessionCard(
+                                                    plan = plan,
+                                                    session = session,
+                                                    photos = photos.filter { it.treatmentSessionId == session.id },
+                                                    onSchedule = { scheduleTarget = session }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                CustomerTreatmentTab.CHAT -> SectionCard {
+                                    SectionTitle(Icons.Default.Chat, "Chat với tư vấn viên")
+                                    if (!canAccess || thread == null || user == null) {
+                                        Text("Chat sẽ hiển thị khi tư vấn viên đã nhận lịch.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                                    } else {
+                                        ChatMessages(messages = messages, currentUserId = user.uid)
+                                        Spacer(Modifier.height(10.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            OutlinedTextField(
+                                                value = messageText,
+                                                onValueChange = { messageText = it },
+                                                modifier = Modifier.weight(1f),
+                                                placeholder = { Text("Nhập tin nhắn...", color = Color(0xFFAAD8CE)) },
+                                                singleLine = true,
+                                                colors = fieldColors(),
+                                                shape = RoundedCornerShape(14.dp)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            IconButton(
+                                                onClick = {
+                                                    val text = messageText.trim()
+                                                    if (text.isBlank()) return@IconButton
+                                                    scope.launch {
+                                                        isSending = true
+                                                        val result = runCatching {
+                                                            sendCustomerMessage(
+                                                                db = db,
+                                                                plan = plan,
+                                                                threadId = thread!!.id,
+                                                                senderId = user.uid,
+                                                                senderName = user.displayName ?: user.email?.substringBefore("@") ?: "Khách hàng",
+                                                                message = text
+                                                            )
+                                                        }
+                                                        if (result.isSuccess) messageText = ""
+                                                        snackbarHostState.showSnackbar(if (result.isSuccess) "Đã gửi" else "Gửi tin thất bại")
+                                                        isSending = false
                                                     }
-                                                    if (result.isSuccess) messageText = ""
-                                                    snackbarHostState.showSnackbar(if (result.isSuccess) "Da gui" else "Gui tin that bai")
-                                                    isSending = false
-                                                }
-                                            },
-                                            enabled = messageText.isNotBlank() && !isSending,
-                                            modifier = Modifier.size(46.dp).clip(CircleShape).background(MintGreen)
-                                        ) { Icon(Icons.Default.Send, contentDescription = null, tint = Color.White) }
+                                                },
+                                                enabled = messageText.isNotBlank() && !isSending,
+                                                modifier = Modifier.size(46.dp).clip(CircleShape).background(MintGreen)
+                                            ) { Icon(Icons.Default.Send, contentDescription = null, tint = Color.White) }
+                                        }
                                     }
                                 }
                             }
@@ -305,14 +317,15 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
         val plan = selectedPlan
         if (plan != null && user != null) {
             ScheduleSessionDialog(
+                plan = plan,
                 session = session,
                 dateOptions = dateOptions,
-                bookedSlotsByDate = bookedSlotsByDate,
+                capacitySnapshot = capacitySnapshot,
                 onDismiss = { scheduleTarget = null },
                 onConfirm = { date, slot ->
                     scope.launch {
                         val result = runCatching {
-                            scheduleTreatmentSession(
+                            scheduleTreatmentSessionWithCapacity(
                                 db = db,
                                 plan = plan,
                                 session = session,
@@ -320,7 +333,7 @@ fun CustomerTreatmentPlanScreen(onBack: () -> Unit = {}) {
                                 slot = slot
                             )
                         }
-                        snackbarHostState.showSnackbar(if (result.isSuccess) "Da gui lich buoi dieu tri" else result.exceptionOrNull()?.message ?: "Dat lich that bai")
+            snackbarHostState.showSnackbar(if (result.isSuccess) "Đã gửi lịch buổi điều trị" else result.exceptionOrNull()?.message ?: "Đặt lịch thất bại")
                         scheduleTarget = null
                     }
                 }
@@ -339,8 +352,8 @@ private fun Header(onBack: () -> Unit, count: Int) {
         }
         Column(modifier = Modifier.padding(top = 52.dp)) {
             Text("SPA", color = Color.White.copy(0.74f), fontSize = 11.sp, letterSpacing = 2.sp)
-            Text("Lieu trinh cua toi", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Text("$count lieu trinh", color = Color.White.copy(0.8f), fontSize = 12.sp)
+            Text("Liệu trình của tôi", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("$count liệu trình", color = Color.White.copy(0.8f), fontSize = 12.sp)
         }
     }
 }
@@ -366,7 +379,7 @@ private fun PlanListItem(plan: TreatmentPlan, selected: Boolean, onClick: () -> 
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(plan.packageName, color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${plan.completedSessionCount}/${plan.sessionCount} buoi - ${treatmentPlanStatusMeta(plan.status).label}", color = Color(0xFF5A8A80), fontSize = 12.sp)
+            Text("${plan.completedSessionCount}/${plan.sessionCount} buổi - ${treatmentPlanStatusMeta(plan.status).label}", color = Color(0xFF5A8A80), fontSize = 12.sp)
         }
     }
 }
@@ -413,7 +426,7 @@ private fun CustomerSessionCard(
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFFF8FFFE)).padding(12.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
-                Text("Buoi ${session.sessionNumber}/${session.totalSessions}", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("Buổi ${session.sessionNumber}/${session.totalSessions}", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text(session.dateLabel.ifBlank { "Dang cho ban chon lich" } + session.timeSlotLabel.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty(), color = Color(0xFF5A8A80), fontSize = 12.sp)
             }
             Box(Modifier.clip(RoundedCornerShape(20.dp)).background(sessionBg(session.status)).padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -422,12 +435,12 @@ private fun CustomerSessionCard(
         }
         if (session.status == TreatmentSessionStatus.NO_SHOW) {
             Spacer(Modifier.height(6.dp))
-            Text("Buoi nay duoc ghi nhan khach khong den. Buoi chua tinh hoan thanh, ban co the chon lich lai.", color = Color(0xFFE8A44A), fontSize = 12.sp)
+            Text("Buổi này được ghi nhận khách không đến. Buổi chưa tính hoàn thành, bạn có thể chọn lịch lại.", color = Color(0xFFE8A44A), fontSize = 12.sp)
         }
         if (needsSchedule) {
             Spacer(Modifier.height(10.dp))
             if (plan.consultantId.isBlank()) {
-                Text("Tu van vien can nhan lich dau tien truoc khi ban dat cac buoi tiep theo.", color = Color(0xFF8ACABA), fontSize = 12.sp)
+                Text("Tư vấn viên cần nhận lịch đầu tiên trước khi bạn đặt các buổi tiếp theo.", color = Color(0xFF8ACABA), fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
             }
             Button(
@@ -437,7 +450,7 @@ private fun CustomerSessionCard(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
             ) {
-                Text(if (session.status == TreatmentSessionStatus.NO_SHOW) "Chon lich lai" else "Chon lich cho buoi nay", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(if (session.status == TreatmentSessionStatus.NO_SHOW) "Chọn lịch lại" else "Chọn lịch cho buổi này", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
         }
         if (photos.isNotEmpty()) {
@@ -445,7 +458,7 @@ private fun CustomerSessionCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Image, contentDescription = null, tint = MintGreen, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Anh tien trinh", color = MintGreen, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text("Ảnh tiến trình", color = MintGreen, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
             }
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -467,34 +480,42 @@ private fun CustomerSessionCard(
 
 @Composable
 private fun ScheduleSessionDialog(
+    plan: TreatmentPlan,
     session: TreatmentSession,
     dateOptions: List<BookingDateOption>,
-    bookedSlotsByDate: Map<Long, Set<String>>,
+    capacitySnapshot: SpaCapacitySnapshot?,
     onDismiss: () -> Unit,
     onConfirm: (BookingDateOption, String) -> Unit
 ) {
     var selectedDate by remember { mutableStateOf(dateOptions.firstOrNull()) }
     var selectedSlot by remember { mutableStateOf(SPA_BOOKING_SLOTS.first()) }
-    val availableSlots = remember(selectedDate, bookedSlotsByDate) {
-        val booked = selectedDate?.let { bookedSlotsByDate[it.startOfDayMillis] }.orEmpty()
-        SPA_BOOKING_SLOTS.filterNot { it in booked }
+    val availabilityByDate = remember(capacitySnapshot, plan.durationPerSessionMinutes, dateOptions) {
+        val snapshot = capacitySnapshot ?: return@remember emptyMap()
+        dateOptions.associate { date ->
+            date.startOfDayMillis to buildSpaSlotAvailability(date, plan.durationPerSessionMinutes, snapshot)
+        }
     }
-    LaunchedEffect(selectedDate?.startOfDayMillis, bookedSlotsByDate) {
-        if (selectedSlot !in availableSlots) selectedSlot = availableSlots.firstOrNull().orEmpty()
+    val availableSlots = remember(selectedDate, availabilityByDate) {
+        selectedDate?.let { date ->
+            availabilityByDate[date.startOfDayMillis]?.filter { it.selectable }.orEmpty()
+        }.orEmpty()
+    }
+    LaunchedEffect(selectedDate?.startOfDayMillis, availabilityByDate) {
+        if (selectedSlot !in availableSlots.map { it.slot }) selectedSlot = availableSlots.firstOrNull()?.slot.orEmpty()
     }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color.White,
         shape = RoundedCornerShape(20.dp),
-        title = { Text("Chon lich buoi ${session.sessionNumber}", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
+        title = { Text("Chọn lịch buổi ${session.sessionNumber}", color = Color(0xFF1A4A40), fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                Text("Chi chon duoc lich trong 1 thang toi. Khung gio da co lich se duoc an.", color = Color(0xFF6C8F87), fontSize = 12.sp)
+                Text("Chỉ chọn được lịch trong 1 tháng tới. Khung giờ đã kín sẽ được ẩn.", color = Color(0xFF6C8F87), fontSize = 12.sp)
                 Spacer(Modifier.height(10.dp))
-                CompactCalendar(dateOptions, selectedDate?.startOfDayMillis, bookedSlotsByDate) { selectedDate = it }
+                CompactCalendar(dateOptions, selectedDate?.startOfDayMillis, availabilityByDate) { selectedDate = it }
                 Spacer(Modifier.height(12.dp))
                 if (availableSlots.isEmpty()) {
-                    Text("Ngay nay da kin lich.", color = Color(0xFFE8A44A), fontSize = 13.sp)
+                    Text("Ngày này đã kín lịch.", color = Color(0xFFE8A44A), fontSize = 13.sp)
                 } else {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(3),
@@ -503,7 +524,8 @@ private fun ScheduleSessionDialog(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         userScrollEnabled = false
                     ) {
-                        items(availableSlots) { slot ->
+                        items(availableSlots) { availability ->
+                            val slot = availability.slot
                             val selected = selectedSlot == slot
                             Box(
                                 modifier = Modifier
@@ -513,7 +535,10 @@ private fun ScheduleSessionDialog(
                                     .padding(vertical = 10.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(slot, color = if (selected) Color.White else Color(0xFF1A4A40), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(slot, color = if (selected) Color.White else Color(0xFF1A4A40), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                    Text("Còn ${availability.remainingCapacity}", color = if (selected) Color.White.copy(0.85f) else MintGreen, fontSize = 10.sp)
+                                }
                             }
                         }
                     }
@@ -528,9 +553,9 @@ private fun ScheduleSessionDialog(
                 },
                 enabled = selectedDate != null && selectedSlot.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = MintGreen)
-            ) { Text("Gui lich") }
+            ) { Text("Gửi lịch") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Huy", color = MintGreen) } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy", color = MintGreen) } }
     )
 }
 
@@ -538,7 +563,7 @@ private fun ScheduleSessionDialog(
 private fun CompactCalendar(
     dateOptions: List<BookingDateOption>,
     selectedDateMillis: Long?,
-    bookedSlotsByDate: Map<Long, Set<String>>,
+    availabilityByDate: Map<Long, List<SpaSlotAvailability>>,
     onSelect: (BookingDateOption) -> Unit
 ) {
     val leadingBlanks = remember(dateOptions) {
@@ -559,8 +584,9 @@ private fun CompactCalendar(
             Spacer(Modifier.aspectRatio(1f))
         }
         items(dateOptions) { option ->
-            val booked = bookedSlotsByDate[option.startOfDayMillis]?.size ?: 0
-            val full = booked >= SPA_BOOKING_SLOTS.size
+            val availability = availabilityByDate[option.startOfDayMillis].orEmpty()
+            val full = availability.isNotEmpty() && availability.none { it.selectable }
+            val hasLimitedCapacity = availability.any { it.bookedCount > 0 }
             val selected = selectedDateMillis == option.startOfDayMillis
             Box(
                 modifier = Modifier
@@ -570,7 +596,7 @@ private fun CompactCalendar(
                         when {
                             selected -> MintGreen
                             full -> Color(0xFFF2F2F2)
-                            booked > 0 -> Color(0xFFFFFBF2)
+                            hasLimitedCapacity -> Color(0xFFFFFBF2)
                             else -> Color(0xFFF8FFFE)
                         }
                     )
@@ -585,6 +611,91 @@ private fun CompactCalendar(
                 )
             }
         }
+    }
+}
+
+private suspend fun scheduleTreatmentSessionWithCapacity(
+    db: FirebaseFirestore,
+    plan: TreatmentPlan,
+    session: TreatmentSession,
+    date: BookingDateOption,
+    slot: String
+) {
+    withContext(Dispatchers.IO) {
+        if (session.appointmentId.isNotBlank() && session.scheduledStartAt > 0L && session.status in setOf(TreatmentSessionStatus.SCHEDULED, TreatmentSessionStatus.RESCHEDULED)) {
+            throw IllegalStateException("Buổi này đã có lịch đang hoạt động")
+        }
+        val duration = plan.durationPerSessionMinutes.coerceAtLeast(30)
+        val (startAt, endAt) = appointmentTimeRange(date.startOfDayMillis, slot, duration)
+        val dateOption = BookingDateOption(date.startOfDayMillis, date.label, date.compactLabel)
+        val capacitySnapshot = loadSpaCapacitySnapshot(db, listOf(dateOption))
+        val availability = buildSpaSlotAvailability(dateOption, duration, capacitySnapshot)
+            .firstOrNull { it.slot == slot }
+        if (availability?.selectable != true) {
+            throw IllegalStateException(availability?.reason ?: "Khung giờ này không khả dụng, vui lòng chọn giờ khác")
+        }
+        val effective = resolveEffectiveSpaCapacity(
+            settings = capacitySnapshot.settings,
+            override = capacitySnapshot.overridesByDateKey[spaDateKey(date.startOfDayMillis)],
+            dateStartMillis = date.startOfDayMillis
+        )
+        val blockStartTimes = capacityBlockStartTimes(startAt, endAt, capacitySnapshot.settings.slotMinutes)
+        val blockKeys = capacityBlockKeys(startAt, endAt, capacitySnapshot.settings.slotMinutes)
+        val appointmentRef = db.collection("appointments").document()
+        val sessionRef = db.collection("treatment_sessions").document(session.id)
+        val appointment = SpaAppointment(
+            id = appointmentRef.id,
+            userId = plan.userId,
+            userEmail = plan.userEmail,
+            userName = plan.userName,
+            phoneNumber = plan.phoneNumber,
+            spaPackageId = plan.spaPackageId,
+            spaPackageName = "${plan.packageName} - Buổi ${session.sessionNumber}/${session.totalSessions}",
+            spaPackagePrice = 0.0,
+            durationMinutes = duration,
+            startAt = startAt,
+            endAt = endAt,
+            appointmentDateLabel = date.label,
+            timeSlotLabel = slot,
+            status = if (plan.consultantId.isBlank()) AppointmentStatus.PENDING else AppointmentStatus.ASSIGNED,
+            note = "Khách chọn lịch cho buổi ${session.sessionNumber}/${session.totalSessions}",
+            consultantId = plan.consultantId,
+            consultantEmail = plan.consultantEmail,
+            consultantName = plan.consultantName,
+            capacityUnits = 1,
+            reservedBlockKeys = blockKeys
+        )
+        val now = System.currentTimeMillis()
+        val sessionUpdates = mapOf(
+            "appointmentId" to appointmentRef.id,
+            "scheduledStartAt" to startAt,
+            "scheduledEndAt" to endAt,
+            "dateLabel" to date.label,
+            "timeSlotLabel" to slot,
+            "status" to TreatmentSessionStatus.SCHEDULED,
+            "updatedAt" to now
+        )
+        reserveSpaCapacityAndWrite(
+            db = db,
+            appointmentRef = appointmentRef,
+            appointment = appointment,
+            blockKeys = blockKeys,
+            blockStartTimes = blockStartTimes,
+            effectiveCapacity = effective.capacity,
+            extraUpdates = listOf(FirestoreTransactionUpdate(sessionRef, sessionUpdates)),
+            verifyBeforeWrite = { tx ->
+                val latestSession = tx.get(sessionRef)
+                val latestStatus = latestSession.getString("status") ?: session.status
+                val latestStartAt = latestSession.getLong("scheduledStartAt") ?: 0L
+                val latestAppointmentId = latestSession.getString("appointmentId").orEmpty()
+                if (latestSession.getString("userId") != plan.userId || latestSession.getString("treatmentPlanId") != plan.id) {
+                    throw IllegalStateException("Buổi điều trị không hợp lệ")
+                }
+                if (latestAppointmentId.isNotBlank() && latestStartAt > 0L && latestStatus in setOf(TreatmentSessionStatus.SCHEDULED, TreatmentSessionStatus.RESCHEDULED)) {
+                    throw IllegalStateException("Buổi này đã được lên lịch")
+                }
+            }
+        )
     }
 }
 
@@ -603,14 +714,14 @@ private suspend fun scheduleTreatmentSession(
             .await()
             .documents
             .any { AppointmentStatus.activeStatuses.contains(it.getString("status")) }
-        if (hasConflict) throw IllegalStateException("Khung gio nay vua co nguoi dat, vui long chon gio khac")
+        if (hasConflict) throw IllegalStateException("Khung giờ này vừa có người đặt, vui lòng chọn giờ khác")
         val appointment = SpaAppointment(
             userId = plan.userId,
             userEmail = plan.userEmail,
             userName = plan.userName,
             phoneNumber = plan.phoneNumber,
             spaPackageId = plan.spaPackageId,
-            spaPackageName = "${plan.packageName} - Buoi ${session.sessionNumber}/${session.totalSessions}",
+            spaPackageName = "${plan.packageName} - Buổi ${session.sessionNumber}/${session.totalSessions}",
             spaPackagePrice = 0.0,
             durationMinutes = plan.durationPerSessionMinutes,
             startAt = startAt,
@@ -618,7 +729,7 @@ private suspend fun scheduleTreatmentSession(
             appointmentDateLabel = date.label,
             timeSlotLabel = slot,
             status = AppointmentStatus.ASSIGNED,
-            note = "Khach chon lich cho buoi ${session.sessionNumber}/${session.totalSessions}",
+            note = "Khách chọn lịch cho buổi ${session.sessionNumber}/${session.totalSessions}",
             consultantId = plan.consultantId,
             consultantEmail = plan.consultantEmail,
             consultantName = plan.consultantName
@@ -631,14 +742,14 @@ private suspend fun scheduleTreatmentSession(
             val latestStatus = latestSession.getString("status") ?: session.status
             val latestStartAt = latestSession.getLong("scheduledStartAt") ?: 0L
             if (latestSession.getString("userId") != plan.userId || latestSession.getString("treatmentPlanId") != plan.id) {
-                throw IllegalStateException("Buoi dieu tri khong hop le")
+                throw IllegalStateException("Buổi điều trị không hợp lệ")
             }
             if (latestStatus == TreatmentSessionStatus.SCHEDULED && latestStartAt > 0L) {
-                throw IllegalStateException("Buoi nay da duoc len lich")
+                throw IllegalStateException("Buổi này đã được lên lịch")
             }
             val slotSnap = tx.get(slotRef)
             if (slotSnap.exists() && slotSnap.getString("status") == "active") {
-                throw IllegalStateException("Khung gio nay vua co nguoi dat, vui long chon gio khac")
+                throw IllegalStateException("Khung giờ này vừa có người đặt, vui lòng chọn giờ khác")
             }
             val now = System.currentTimeMillis()
             tx.set(
@@ -679,7 +790,7 @@ private const val DAY_MILLIS = 86_400_000L
 @Composable
 private fun ChatMessages(messages: List<ConsultationChatMessage>, currentUserId: String) {
     if (messages.isEmpty()) {
-        Text("Chua co tin nhan nao.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+        Text("Chưa có tin nhắn nào.", color = Color(0xFF8ACABA), fontSize = 13.sp)
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

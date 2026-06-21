@@ -33,10 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.appbanmypham.model.AppointmentStatus
+import com.example.appbanmypham.model.ACTIVE_TREATMENT_PLAN_KEYS_COLLECTION
 import com.example.appbanmypham.model.Product
 import com.example.appbanmypham.model.ProductCategories
 import com.example.appbanmypham.model.SpaAppointment
 import com.example.appbanmypham.model.SpaPackage
+import com.example.appbanmypham.model.TreatmentPlanStatus
+import com.example.appbanmypham.model.TreatmentSessionStatus
+import com.example.appbanmypham.model.activeTreatmentPlanKey
 import com.example.appbanmypham.model.appointmentStatusMeta
 import com.example.appbanmypham.model.firestoreDocToSpaAppointment
 import com.example.appbanmypham.model.firestoreDocToSpaPackage
@@ -47,6 +51,8 @@ import com.example.appbanmypham.ui.theme.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class ProductActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -486,6 +492,7 @@ private fun SpaTabContent(
 ) {
     val auth = remember { FirebaseAuth.getInstance() }
     val db = remember { FirebaseFirestore.getInstance() }
+    val scope = rememberCoroutineScope()
     val currentUser = auth.currentUser
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Tat ca") }
@@ -549,8 +556,8 @@ private fun SpaTabContent(
                     }
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text("LUMIERE SPA", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                        Text("Cham soc da va thu gian", color = Color.White.copy(0.78f), fontSize = 11.sp)
+                        Text("LUMIÈRE SPA", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                        Text("Chăm sóc da và thư giãn", color = Color.White.copy(0.78f), fontSize = 11.sp)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -558,7 +565,7 @@ private fun SpaTabContent(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Tim goi spa...", color = Color.White.copy(0.75f)) },
+                    placeholder = { Text("Tìm gói spa...", color = Color.White.copy(0.75f)) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -615,7 +622,7 @@ private fun SpaTabContent(
                     Icon(Icons.Default.Spa, contentDescription = null, tint = Color(0xFFAAD8CE), modifier = Modifier.size(48.dp))
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        if (packages.isEmpty()) "Chua co goi spa nao" else "Khong tim thay goi phu hop",
+                        if (packages.isEmpty()) "Chưa có gói spa nào" else "Không tìm thấy gói phù hợp",
                         color = Color(0xFF8ACABA),
                         fontSize = 15.sp
                     )
@@ -644,15 +651,9 @@ private fun SpaTabContent(
                         onCancel = { appointment ->
                             val uid = currentUser?.uid ?: return@SpaAppointmentHistorySection
                             if (appointment.userId == uid && appointment.status == AppointmentStatus.PENDING) {
-                                val now = System.currentTimeMillis()
-                                db.collection("appointments").document(appointment.id).update(
-                                    mapOf(
-                                        "status" to AppointmentStatus.CANCELLED,
-                                        "cancelledAt" to now,
-                                        "updatedAt" to now,
-                                        "cancelReason" to "Customer cancelled"
-                                    )
-                                )
+                                scope.launch {
+                                    runCatching { cancelPendingCustomerSpaAppointment(db, appointment, uid) }
+                                }
                             }
                         }
                     )
@@ -664,6 +665,90 @@ private fun SpaTabContent(
             }
         }
     }
+}
+
+private suspend fun cancelPendingCustomerSpaAppointment(
+    db: FirebaseFirestore,
+    appointment: SpaAppointment,
+    userId: String
+) {
+    val now = System.currentTimeMillis()
+    val appointmentRef = db.collection("appointments").document(appointment.id)
+    val planDoc = db.collection("treatment_plans")
+        .whereEqualTo("appointmentId", appointment.id)
+        .get()
+        .await()
+        .documents
+        .firstOrNull()
+    val sessionDocs = planDoc?.let { plan ->
+        db.collection("treatment_sessions")
+            .whereEqualTo("treatmentPlanId", plan.id)
+            .get()
+            .await()
+            .documents
+    }.orEmpty()
+    val blockRefs = appointment.reservedBlockKeys.map {
+        db.collection("appointment_capacity_blocks").document(it)
+    }
+
+    db.runTransaction { tx ->
+        val latestAppointment = tx.get(appointmentRef)
+        val latestUserId = latestAppointment.getString("userId").orEmpty()
+        val latestStatus = latestAppointment.getString("status") ?: AppointmentStatus.PENDING
+        if (latestUserId != userId || latestStatus != AppointmentStatus.PENDING) {
+            throw IllegalStateException("Lịch này không còn ở trạng thái chờ để hủy")
+        }
+        val blockSnapshots = blockRefs.map { tx.get(it) }
+        if (appointment.startAt > now) {
+            blockRefs.forEachIndexed { index, ref ->
+                val snap = blockSnapshots[index]
+                if (snap.exists()) {
+                    val ids = (snap.get("appointmentIds") as? List<*>)
+                        ?.mapNotNull { it as? String }
+                        .orEmpty()
+                        .filterNot { it == appointment.id }
+                    val bookedCount = ((snap.getLong("bookedCount") ?: 0L).toInt() - 1).coerceAtLeast(0)
+                    tx.update(ref, mapOf("bookedCount" to bookedCount, "appointmentIds" to ids, "updatedAt" to now))
+                }
+            }
+        }
+        tx.update(
+            appointmentRef,
+            mapOf(
+                "status" to AppointmentStatus.CANCELLED,
+                "cancelledAt" to now,
+                "updatedAt" to now,
+                "cancelReason" to "Customer cancelled"
+            )
+        )
+        planDoc?.let { plan ->
+            tx.update(
+                plan.reference,
+                mapOf(
+                    "status" to TreatmentPlanStatus.CANCELLED,
+                    "cancelledAt" to now,
+                    "cancelReason" to "Customer cancelled first appointment",
+                    "updatedAt" to now
+                )
+            )
+            sessionDocs.forEach { session ->
+                tx.update(
+                    session.reference,
+                    mapOf(
+                        "status" to TreatmentSessionStatus.CANCELLED,
+                        "cancelledAt" to now,
+                        "cancelReason" to "Customer cancelled first appointment",
+                        "updatedAt" to now
+                    )
+                )
+            }
+            tx.delete(
+                db.collection(ACTIVE_TREATMENT_PLAN_KEYS_COLLECTION)
+                    .document(activeTreatmentPlanKey(userId, appointment.spaPackageId))
+            )
+        }
+        null
+    }.await()
 }
 
 @Composable
@@ -687,9 +772,9 @@ private fun TreatmentPlanEntry(
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Lieu trinh cua toi", color = Color(0xFF1A4A40), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Liệu trình của tôi", color = Color(0xFF1A4A40), fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    if (isLoggedIn) "Xem tien do, anh dieu tri va chat voi tu van vien" else "Dang nhap de xem lieu trinh spa",
+                    if (isLoggedIn) "Xem tiến độ, ảnh điều trị và chat với tư vấn viên" else "Đăng nhập để xem liệu trình spa",
                     color = Color(0xFF8ACABA),
                     fontSize = 12.sp
                 )
@@ -719,12 +804,12 @@ private fun SpaAppointmentHistorySection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.EventAvailable, contentDescription = null, tint = MintGreen, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Lich spa cua toi", color = Color(0xFF1A4A40), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Lịch spa của tôi", color = Color(0xFF1A4A40), fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(10.dp))
             when {
                 !isLoggedIn -> {
-                    Text("Dang nhap de xem va quan ly lich hen spa.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                    Text("Đăng nhập để xem và quản lý lịch hẹn spa.", color = Color(0xFF8ACABA), fontSize = 13.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = onGoLogin,
@@ -734,15 +819,15 @@ private fun SpaAppointmentHistorySection(
                     ) {
                         Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Dang nhap")
+                        Text("Đăng nhập")
                     }
                 }
                 isLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(color = MintGreen, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Dang tai lich hen...", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                    Text("Đang tải lịch hẹn...", color = Color(0xFF8ACABA), fontSize = 13.sp)
                 }
-                appointments.isEmpty() -> Text("Ban chua co lich hen spa nao.", color = Color(0xFF8ACABA), fontSize = 13.sp)
+                appointments.isEmpty() -> Text("Bạn chưa có lịch hẹn spa nào.", color = Color(0xFF8ACABA), fontSize = 13.sp)
                 else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     appointments.forEach { appointment ->
                         CustomerAppointmentCard(
@@ -787,7 +872,7 @@ private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: Strin
                     Spacer(Modifier.height(3.dp))
                     Text("${appointment.appointmentDateLabel} - ${appointment.timeSlotLabel}", color = Color(0xFF5A8A80), fontSize = 12.sp)
                     if (appointment.consultantName.isNotBlank() || appointment.consultantEmail.isNotBlank()) {
-                        Text("Tu van: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}", color = MintGreen, fontSize = 12.sp)
+                        Text("Tư vấn: ${appointment.consultantName.ifBlank { appointment.consultantEmail }}", color = MintGreen, fontSize = 12.sp)
                     }
                 }
                 Box(
@@ -804,14 +889,14 @@ private fun CustomerAppointmentCard(appointment: SpaAppointment, imageUrl: Strin
                 TextButton(onClick = onCancel, contentPadding = PaddingValues(0.dp)) {
                     Icon(Icons.Default.Cancel, contentDescription = null, tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Huy lich", color = Color(0xFFE57373), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Hủy lịch", color = Color(0xFFE57373), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
-            } else if (appointment.consultantId.isNotBlank() && appointment.status in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED, AppointmentStatus.RESCHEDULED, AppointmentStatus.NO_SHOW)) {
+            } else if (appointment.consultantId.isNotBlank() && appointment.status in setOf(AppointmentStatus.ASSIGNED, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN, AppointmentStatus.IN_SERVICE, AppointmentStatus.RESCHEDULED, AppointmentStatus.NO_SHOW)) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onOpenChat, contentPadding = PaddingValues(0.dp)) {
                     Icon(Icons.Default.Chat, contentDescription = null, tint = MintGreen, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Chat tu van", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Chat tư vấn", color = MintGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -822,6 +907,8 @@ private fun statusColor(status: String): Color = when (status) {
     AppointmentStatus.PENDING -> Color(0xFFE8A44A)
     AppointmentStatus.ASSIGNED -> Color(0xFF7B61D1)
     AppointmentStatus.CONFIRMED -> Color(0xFF4A90D9)
+    AppointmentStatus.CHECKED_IN -> Color(0xFF2E8A7A)
+    AppointmentStatus.IN_SERVICE -> Color(0xFF009688)
     AppointmentStatus.COMPLETED -> MintGreen
     AppointmentStatus.CANCELLED -> Color(0xFFE57373)
     AppointmentStatus.NO_SHOW -> Color(0xFFE8A44A)
@@ -833,6 +920,8 @@ private fun statusBg(status: String): Color = when (status) {
     AppointmentStatus.PENDING -> Color(0xFFFFF3E0)
     AppointmentStatus.ASSIGNED -> Color(0xFFF0ECFF)
     AppointmentStatus.CONFIRMED -> Color(0xFFE8F0FB)
+    AppointmentStatus.CHECKED_IN -> Color(0xFFEAF9F5)
+    AppointmentStatus.IN_SERVICE -> Color(0xFFE0F2F1)
     AppointmentStatus.COMPLETED -> Color(0xFFEAF9F5)
     AppointmentStatus.CANCELLED -> Color(0xFFFFECEC)
     AppointmentStatus.NO_SHOW -> Color(0xFFFFF3E0)
@@ -879,7 +968,7 @@ private fun SpaPackageCard(item: SpaPackage, onClick: () -> Unit) {
                         Text(item.category.ifBlank { "Spa" }, color = MintGreen, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text("${item.durationMinutes} phut", color = Color(0xFF8ACABA), fontSize = 11.sp)
+                    Text("${item.durationMinutes} phút", color = Color(0xFF8ACABA), fontSize = 11.sp)
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(

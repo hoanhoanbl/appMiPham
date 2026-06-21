@@ -26,24 +26,40 @@ data class SpaAppointment(
     val consultantEmail: String = "",
     val consultantName: String = "",
     val consultantNote: String = "",
+    val capacityUnits: Int = 1,
+    val resourceMode: String = SpaResourceMode.POOLED,
+    val reservedBlockKeys: List<String> = emptyList(),
+    val assignedRoomName: String = "",
+    val assignedSpecialistName: String = "",
+    val internalStaffNote: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val confirmedAt: Long = 0L,
+    val checkedInAt: Long = 0L,
+    val inServiceAt: Long = 0L,
     val completedAt: Long = 0L,
     val cancelledAt: Long = 0L,
+    val noShowAt: Long = 0L,
     val cancelReason: String = ""
 )
+
+object SpaResourceMode {
+    const val POOLED = "pooled"
+}
 
 object AppointmentStatus {
     const val PENDING = "pending"
     const val ASSIGNED = "assigned"
     const val CONFIRMED = "confirmed"
+    const val CHECKED_IN = "checked_in"
+    const val IN_SERVICE = "in_service"
     const val COMPLETED = "completed"
     const val CANCELLED = "cancelled"
     const val NO_SHOW = "no_show"
     const val RESCHEDULED = "rescheduled"
 
-    val activeStatuses = setOf(PENDING, ASSIGNED, CONFIRMED, RESCHEDULED)
+    val activeStatuses = setOf(PENDING, ASSIGNED, CONFIRMED, CHECKED_IN, IN_SERVICE, RESCHEDULED)
+    val terminalStatuses = setOf(COMPLETED, CANCELLED, NO_SHOW)
 }
 
 data class AppointmentStatusMeta(
@@ -53,20 +69,36 @@ data class AppointmentStatusMeta(
 )
 
 val SPA_APPOINTMENT_STATUSES = listOf(
-    AppointmentStatusMeta(AppointmentStatus.PENDING, "Cho xac nhan", "Dang cho tu van vien xac nhan"),
-    AppointmentStatusMeta(AppointmentStatus.ASSIGNED, "Da co tu van vien", "Tu van vien da nhan va co the trao doi voi khach"),
-    AppointmentStatusMeta(AppointmentStatus.CONFIRMED, "Da xac nhan lich", "Lich hen da duoc xac nhan thoi gian"),
-    AppointmentStatusMeta(AppointmentStatus.COMPLETED, "Hoan thanh", "Lich hen da hoan thanh"),
-    AppointmentStatusMeta(AppointmentStatus.CANCELLED, "Da huy", "Lich hen da huy"),
-    AppointmentStatusMeta(AppointmentStatus.NO_SHOW, "Khach khong den", "Khach vang mat, khong tru buoi trong MVP"),
-    AppointmentStatusMeta(AppointmentStatus.RESCHEDULED, "Da doi lich", "Lich hen da duoc hen lai")
+    AppointmentStatusMeta(AppointmentStatus.PENDING, "Chờ xác nhận", "Đang chờ tư vấn viên xác nhận"),
+    AppointmentStatusMeta(AppointmentStatus.ASSIGNED, "Đã có tư vấn viên", "Tư vấn viên đã nhận và có thể trao đổi với khách"),
+    AppointmentStatusMeta(AppointmentStatus.CONFIRMED, "Đã xác nhận lịch", "Lịch hẹn đã được xác nhận thời gian"),
+    AppointmentStatusMeta(AppointmentStatus.CHECKED_IN, "Khách đã đến", "Khách đã check-in và đang chờ bắt đầu dịch vụ"),
+    AppointmentStatusMeta(AppointmentStatus.IN_SERVICE, "Đang làm dịch vụ", "Buổi spa đang được thực hiện"),
+    AppointmentStatusMeta(AppointmentStatus.COMPLETED, "Hoàn thành", "Lịch hẹn đã hoàn thành"),
+    AppointmentStatusMeta(AppointmentStatus.CANCELLED, "Đã hủy", "Lịch hẹn đã hủy"),
+    AppointmentStatusMeta(AppointmentStatus.NO_SHOW, "Khách không đến", "Khách vắng mặt, chưa tính hoàn thành buổi"),
+    AppointmentStatusMeta(AppointmentStatus.RESCHEDULED, "Đã đổi lịch", "Lịch hẹn đã được hẹn lại")
 )
 
 fun appointmentStatusMeta(status: String): AppointmentStatusMeta =
     SPA_APPOINTMENT_STATUSES.find { it.key == status }
         ?: AppointmentStatusMeta(status, status, status)
 
-val SPA_BOOKING_SLOTS = listOf("09:00", "10:30", "13:30", "15:00", "16:30")
+val SPA_BOOKING_SLOTS = listOf(
+    "09:00",
+    "09:30",
+    "10:00",
+    "10:30",
+    "11:00",
+    "11:30",
+    "13:30",
+    "14:00",
+    "14:30",
+    "15:00",
+    "15:30",
+    "16:00",
+    "16:30"
+)
 
 fun firestoreDocToSpaAppointment(doc: DocumentSnapshot): SpaAppointment {
     val now = System.currentTimeMillis()
@@ -90,11 +122,22 @@ fun firestoreDocToSpaAppointment(doc: DocumentSnapshot): SpaAppointment {
         consultantEmail = doc.getString("consultantEmail") ?: "",
         consultantName = doc.getString("consultantName") ?: "",
         consultantNote = doc.getString("consultantNote") ?: "",
+        capacityUnits = ((doc.getLong("capacityUnits") ?: 1L).toInt()).coerceAtLeast(1),
+        resourceMode = doc.getString("resourceMode") ?: SpaResourceMode.POOLED,
+        reservedBlockKeys = (doc.get("reservedBlockKeys") as? List<*>)
+            ?.mapNotNull { it as? String }
+            .orEmpty(),
+        assignedRoomName = doc.getString("assignedRoomName") ?: "",
+        assignedSpecialistName = doc.getString("assignedSpecialistName") ?: "",
+        internalStaffNote = doc.getString("internalStaffNote") ?: "",
         createdAt = doc.getLong("createdAt") ?: now,
         updatedAt = doc.getLong("updatedAt") ?: now,
         confirmedAt = doc.getLong("confirmedAt") ?: 0L,
+        checkedInAt = doc.getLong("checkedInAt") ?: 0L,
+        inServiceAt = doc.getLong("inServiceAt") ?: 0L,
         completedAt = doc.getLong("completedAt") ?: 0L,
         cancelledAt = doc.getLong("cancelledAt") ?: 0L,
+        noShowAt = doc.getLong("noShowAt") ?: 0L,
         cancelReason = doc.getString("cancelReason") ?: ""
     )
 }
@@ -120,10 +163,19 @@ fun SpaAppointment.toFirestoreMap(includeCreatedAt: Boolean = false): HashMap<St
         "consultantEmail" to consultantEmail,
         "consultantName" to consultantName,
         "consultantNote" to consultantNote,
+        "capacityUnits" to capacityUnits.coerceAtLeast(1),
+        "resourceMode" to resourceMode,
+        "reservedBlockKeys" to reservedBlockKeys,
+        "assignedRoomName" to assignedRoomName,
+        "assignedSpecialistName" to assignedSpecialistName,
+        "internalStaffNote" to internalStaffNote,
         "updatedAt" to now,
         "confirmedAt" to confirmedAt,
+        "checkedInAt" to checkedInAt,
+        "inServiceAt" to inServiceAt,
         "completedAt" to completedAt,
         "cancelledAt" to cancelledAt,
+        "noShowAt" to noShowAt,
         "cancelReason" to cancelReason
     ).apply {
         if (includeCreatedAt) this["createdAt"] = now

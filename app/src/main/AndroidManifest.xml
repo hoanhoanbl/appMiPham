@@ -39,6 +39,7 @@
         <activity android:name=".ui.admin.ManageBrandActivity" />
         <activity android:name=".ui.admin.ManageSpaPackageActivity" />
         <activity android:name=".ui.admin.ManageSpaAppointmentActivity" />
+        <activity android:name=".ui.admin.ManageSpaCapacityActivity" />
         <activity android:name=".ui.admin.ManageTreatmentActivity" />
         <activity android:name=".ui.consultant.ConsultantDashboardActivity" />
         <activity android:name=".ui.consultant.ConsultantAppointmentDetailActivity" />
